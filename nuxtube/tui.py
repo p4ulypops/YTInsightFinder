@@ -450,6 +450,8 @@ class NuxTubeTUI:
             elif key == "\t":
                 self.opt_tab = (self.opt_tab + 1) % len(OPT_TABS)
                 self.opt_cursor = 0
+                self.opt_editing = False
+                self.opt_edit_buf = ""
                 return True
             elif key == "\x1b[A":  # Up
                 self.opt_cursor = max(0, self.opt_cursor - 1)
@@ -903,7 +905,6 @@ Press [bold]?[/] to close.
         )
 
     def _render_opts_pipeline(self) -> List[str]:
-        nav = self._navigable_opts()
         nav_idx = 0
         lines = []
         for opt in PIPELINE_OPTS:
