@@ -1,575 +1,408 @@
-# 🎬 NuxTube — YouTube Archive Pipeline & Playlist Watcher
+# 🎬 NuxTube — YouTube Archive Pipeline
 
-> **Self-hosted YouTube video archiver with transcripts, screenshots, clips, LLM key-point extraction, and a live TUI dashboard.**
+> **Give it a playlist. Get back transcripts, screenshots, clips, LLM key points, an OmniFile, and a beautiful HTML viewer. All automated. All self-hosted.**
 
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9+-blue?logo=python)](https://python.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Rich TUI](https://img.shields.io/badge/TUI-Rich-yellow)](https://github.com/Textualize/rich)
+[![v2.3](https://img.shields.io/badge/version-2.3-brightgreen)](https://github.com/p4ulypops/YTInsightFinder)
 
 ---
 
-## 📋 Table of Contents
+## What it actually does
 
-- [What It Does](#-what-it-does)
-- [Quick Start](#-quick-start)
-- [TUI Dashboard](#-tui-dashboard)
-- [CLI Usage](#-cli-usage)
-- [Configuration](#-configuration)
-- [Pipeline Stages](#-pipeline-stages)
-- [Transcript SSL Fix](#-transcript-ssl-fix-3-tier-fallback)
-- [Channel Watching — Disclaimer](#-channel-watching--disclaimer)
-- [Middleware API](#-middleware-api)
-- [Daemon Mode](#-daemon-mode)
-- [Web Dashboard](#-web-dashboard)
-- [Player Data — Smart Key Moments](#-player-data--smart-key-moments)
-- [Capture Modes](#-capture-modes)
-- [Bug Fixes from v1](#-bug-fixes-from-v1)
-- [Project Structure](#-project-structure)
-- [Contributing](#-contributing)
-- [License](#-license)
+Point NuxTube at a YouTube playlist (or drop in a single URL) — it captures the **entire video experience** and archives it locally. No cloud. No subscriptions. Just your data, your way.
 
----
-
-## 🔥 What It Does
-
-Give it a YouTube URL or playlist — it archives the **entire video experience**:
-
-| Stage | Output | Description |
-|-------|--------|-------------|
-| 📝 **Transcript** | `transcript.md` | Timestamped + plain text, fetched via 3-tier fallback |
-| 🏷️ **Metadata** | `metadata.json` | Title, channel, duration, thumbnail (via oEmbed) |
-| 📹 **Video Download** | temp MP4 | 720p via yt-dlp, cycles clients on 403 |
-| 📸 **Screenshots** | `screenshots/*.jpg` | Captured at every "as you can see…" visual cue |
-| 🎞️ **Clips** | `clips/*.mp4` | Short clips of high-value demo moments |
-| 🔑 **Key Points** | `key-points.md` + `.json` | LLM-extracted lessons, structured + human-readable |
-| 📊 **Tracker** | `master_tracker.csv` | Google Sheets-ready CSV with formulas |
-
-### 🆕 What's New in v2
-
-- ✅ **Full TUI dashboard** — htop-style multi-panel live display with keyboard controls
-- ✅ **Interactive first-run setup** — wizard asks questions, saves to `config.yaml`
-- ✅ **3-tier SSL fallback** — transcript fetching bypasses Python's broken TLS stack
-- ✅ **Thread-safe CSV** — no more corruption in parallel mode
-- ✅ **Configurable pipeline stages** — pick which stages to run per video
-- ✅ **Multiple playlist + channel support** — watch many sources simultaneously
-- ✅ **1hr+ video fix** — timestamp parsing now handles `H:MM:SS` format
-- ✅ **Broader clip context** — 5-segment window instead of 1 (fixes 44% zero-clip rate)
-- ✅ **Middleware-ready** — importable as a Python library for automation
+| Stage | Output | What's happening |
+|-------|--------|-----------------|
+| 📝 **Transcript** | `transcript.md` | Timestamped + plain text via 3-tier SSL-safe fetch |
+| 🏷️ **Metadata** | `metadata.json` | Title, channel, duration, thumbnail, chapters, heatmap |
+| 🎯 **Smart moments** | (in metadata) | YouTube chapters + viewer heatmap + visual cues merged |
+| 📥 **Segment download** | temp files | Only the key moments — not the full video (~25x less data) |
+| 📸 **Screenshots** | `screenshots/*.jpg` | ffmpeg grab at every key moment |
+| 🎞️ **Clips** | `clips/*.mp4` | Short videos of the high-value moments |
+| 🧠 **Key Points** | `key-points.json` + `.md` | LLM-extracted lessons via `hermes -z` |
+| 📊 **Tracker** | `master_tracker.csv` | Google Sheets-ready with image formulas |
+| 🗂️ **OmniFile** | `omni.json` | Everything merged into one portable JSON |
+| 🌐 **Viewer** | `viewer.html` | Beautiful HTML viewer for the whole archive |
 
 ---
 
 ## 🚀 Quick Start
 
 ```bash
-# Install dependencies
+# Install deps
 pip install rich pyyaml youtube-transcript-api yt-dlp
 
-# Run (first launch = interactive setup wizard)
+# First launch = interactive setup wizard (asks questions, saves config.yaml)
 python3 nuxtube.py
 
-# Or archive a single video quickly
+# Or just archive one video right now
 python3 nuxtube.py --archive "https://www.youtube.com/watch?v=VIDEO_ID"
+
+# See the TUI immediately with the test config
+python3 nuxtube.py --config test_config.yaml
 ```
-
-### 🐍 Python Version
-
-| Version | Status | Notes |
-|---------|--------|-------|
-| 3.11+ | ✅ **Recommended** | No SSL issues, all features work |
-| 3.9 | ⚠️ Works with fallback | curl tier handles LibreSSL/urllib3 issue |
-| 3.8 | ❌ Not supported | Missing features |
 
 ---
 
 ## 🖥️ TUI Dashboard
 
-Launch with `python3 nuxtube.py` — the dashboard stays on screen while the watcher runs:
+The whole thing runs in a live terminal dashboard — htop-style, 4 Hz refresh, full keyboard control.
 
 ```
 ┌─────────────────────────┬─────────────────────────┐
-│  📺 Watch Status         │  ⚙️ Active Workers       │
-│  ───────────────         │  ───────────────         │
-│  PL  AI Agents playlist  │  W0 [=======   ] 58% [S] │
-│  CH  Some Channel        │     Claude Code Agentic..│
-│  Last check: 12:34       │  W1 [===       ] 25% [T] │
-│  Queue: 3 waiting         │     How to build an OS..│
+│  📺 Watch Status         │  ⚙️  Active Workers       │
+│  ─────────────           │  ─────────────           │
+│  PL  AI Agents           │  W0 [=======   ] 58% [S] │
+│  CH  Tech Channel        │     Claude Code Agentic..│
+│  Last check: 14:22       │  W1 [===       ] 25% [T] │
+│  Queue:    3 waiting     │     How to build an OS.. │
 │  Archived: 27            │  W2 [idle]               │
 ├─────────────────────────┴─────────────────────────┤
 │  ✅ Recently Completed                              │
-│  Title                    Category   SS  Clips  OK  │
-│  Claude Code Agentic OS   ai-agents  14     3   ✅ │
-│  Every Level of Hermes... ai-agents  13     3   ✅ │
+│  ▶ Claude Code Agentic OS   ai-agents  14   3  OK  │
+│    Every Level of Hermes..  ai-agents  13   3  OK  │
 ├────────────────────────────────────────────────────┤
 │  📋 Live Log                                        │
-│  [12:34:56] INFO  W0: Fetching transcript...       │
-│  [12:34:58] OK    W0: Got 502 segments             │
-│  [12:35:01] INFO  W0: Downloading video (720p)... │
+│  [14:22:01] OK    W0: OmniFile written: omni.json  │
+│  [14:22:03] INFO  W1: Smart moments: 9 found       │
+│  [14:22:05] OK    W1: Viewer: /ai-agents/viewer.ht │
 ├────────────────────────────────────────────────────┤
-│  p:pause  r:retry  s:skip  n:now  q:quit  ?:help   │
+│  p:pause r:retry s:skip n:now a:add o:options      │
+│  v:viewer g:omni G:all ?:help q:quit               │
 └────────────────────────────────────────────────────┘
 ```
 
 ### ⌨️ Keyboard Controls
 
-| Key | Action | Description |
-|-----|--------|-------------|
-| `p` | ⏸️ Pause/Resume | Pause or resume the playlist watcher |
-| `r` | 🔄 Retry | Re-queue all failed videos |
-| `s` | ⏭️ Skip | Skip the current video in the first active worker |
-| `n` | 🔍 Check Now | Force an immediate playlist check (don't wait for poll) |
-| `q` | 🚪 Quit | Gracefully shut down all workers and exit |
-| `?` | ❓ Help | Show/hide the help overlay |
-| `Tab` | ↔️ Focus | Switch focus between panels |
-| `↑↓` | 🔄 Navigate | Move within the focused panel |
+| Key | What it does |
+|-----|-------------|
+| `p` | Pause / resume the playlist watcher |
+| `r` | Retry all failed videos |
+| `s` | Skip current video in active worker |
+| `n` | Force immediate playlist check |
+| `a` | Add a YouTube URL to queue manually |
+| `o` | **Open full options screen** (edit all settings live) |
+| `g` | Generate OmniFile for selected completed video |
+| `v` | Generate HTML viewer for selected video |
+| `G` | Batch-generate viewers for **all** completed videos |
+| `Tab` | Cycle panel focus (Watch → Workers → Completed → Log) |
+| `↑↓` | Navigate completed list / scroll log |
+| `Enter` | Open detail view for selected video |
+| `?` | Help overlay |
+| `q` | Quit gracefully |
 
 ---
 
-## 📐 CLI Usage
+## ⚙️ Options Screen (`o` key)
+
+Full live settings editor — no need to touch config.yaml manually.
+
+### Pipeline tab
+Edit everything: capture mode, quality, key moment mode, max clips, durations, offsets, max height, keep video, segment download. Toggle each pipeline stage on/off individually.
+
+### Watch tab
+Poll interval, max workers, archive delay, archive timeout, auto-archive toggle.
+
+### Sources tab
+Add (`a`), delete (`d`), toggle enable/disable (`Enter`) for playlists and channels. URL type auto-detected.
+
+### Categories tab
+Add custom categories (`a`), delete (`d`). Used for auto-classification and folder structure.
+
+**`s`** saves config.yaml. Tab switches between sections. Esc closes.
+
+---
+
+## 🗂️ OmniFile — One JSON to Rule Them All
+
+Every archived video gets an `omni.json` — a single portable document containing everything:
+
+```json
+{
+  "omni_version": "1.0",
+  "metadata": { "title": "...", "channel": "...", "duration": "12:34", "thumbnail_url": "..." },
+  "transcript": { "full_text": "...", "timestamped_text": "[0:01] Hello..." },
+  "key_points": { "summary": "...", "key_points": [...] },
+  "player_data": { "chapters": [...], "heatmap": [...] },
+  "screenshots": [{ "timestamp": 123, "screenshot": "screenshots/02m03s.jpg", "ok": true }],
+  "clips": [{ "timestamp": 123, "clip": "clips/seg_00.mp4", "ok": true }],
+  "files": { "metadata.json": { "size": 2048 }, ... }
+}
+```
+
+Auto-generated as the final pipeline stage. Also manual:
 
 ```bash
-# Launch TUI (default)
+python3 nuxtube.py --omni ./youtube_videos/ai-agents/my-video
+python3 nuxtube.py --omni-all
+```
+
+---
+
+## 🌐 HTML Viewer
+
+Each video gets a beautiful self-contained `viewer.html` — dark theme, fully interactive.
+
+**Tabs:** Overview (stats, heatmap, screenshot gallery) · Transcript (searchable) · Key Points (summary + cards) · Clips (inline video player)
+
+**Sidebar:** thumbnail, chapter list, key moments index.
+
+**Three modes:**
+
+| Mode | How | Use when |
+|------|-----|----------|
+| **Live** | Fetches `./omni.json` on load | Serve via `python3 -m http.server` from folder |
+| **Baked** | omni.json embedded in HTML | Works from `file://`, send to anyone |
+| **API** | Loads from `/api/omni?video_id=X` | Served via the web dashboard |
+
+```bash
+# Live viewer (fetches omni.json at runtime)
+python3 nuxtube.py --viewer ./youtube_videos/ai-agents/my-video
+# Serve: cd ./youtube_videos/ai-agents/my-video && python3 -m http.server 9000
+# Open:  http://localhost:9000/viewer.html
+
+# Baked viewer (self-contained, works from file://)
+python3 nuxtube.py --viewer ./youtube_videos/ai-agents/my-video --bake
+
+# Everything
+python3 nuxtube.py --viewer-all
+python3 nuxtube.py --viewer-all --bake
+
+# From TUI: select a video in completed list → v (live) or b (baked)
+```
+
+---
+
+## 📐 Full CLI Reference
+
+```bash
+# TUI (default)
 python3 nuxtube.py
+python3 nuxtube.py --config test_config.yaml
 
-# Quick archive without TUI
-python3 nuxtube.py --archive "https://youtube.com/watch?v=VIDEO_ID"
-
-# Force a category
+# Single video archive (no TUI)
+python3 nuxtube.py --archive URL
 python3 nuxtube.py --archive URL --category coding
 
-# Use a custom config file
-python3 nuxtube.py --config /path/to/my-config.yaml
+# Headless daemon
+python3 nuxtube.py --daemon
+python3 nuxtube.py --daemon --web 8080
 
-# Re-run interactive setup
+# TUI + web dashboard
+python3 nuxtube.py --web 8080
+
+# Query running daemon
+python3 nuxtube.py --status
+
+# Re-run setup wizard
 python3 nuxtube.py --setup
 
-# List videos in a playlist
+# Inspect a playlist or channel
 python3 nuxtube.py --check-playlist "https://youtube.com/playlist?list=..."
+python3 nuxtube.py --check-channel "https://youtube.com/@Channel"
 
-# List videos in a channel (shows disclaimer first)
-python3 nuxtube.py --check-channel "https://youtube.com/@SomeChannel"
+# OmniFile
+python3 nuxtube.py --omni FOLDER
+python3 nuxtube.py --omni-all
 
-# Show version
+# Viewer
+python3 nuxtube.py --viewer FOLDER
+python3 nuxtube.py --viewer FOLDER --bake
+python3 nuxtube.py --viewer-all
+python3 nuxtube.py --viewer-all --bake
+
 python3 nuxtube.py --version
 ```
 
 ---
 
-## ⚙️ Configuration
+## ⚙️ config.yaml
 
-On first run, the interactive setup wizard asks:
-
-1. 📁 **Output directory** — where to save archives
-2. 📺 **Playlist URLs** — YouTube playlists to watch
-3. 📱 **Channel URLs** — with ⚠️ disclaimer (see below)
-4. 🔧 **Pipeline stages** — which steps to run per video
-5. 🧪 **Worker count** — parallel archive threads
-6. 🔄 **Poll interval** — seconds between playlist checks
-7. 🎨 **Keep source video** — retain MP4 after archiving
-
-Settings are saved to `config.yaml`:
+Generated on first run. Edit live via `o` in TUI or directly in the file.
 
 ```yaml
 output_dir: ./youtube_videos
+
 sources:
-  - url: "https://youtube.com/playlist?list=..."
+  - url: "https://youtube.com/playlist?list=PLxxx"
     name: "AI Agents"
-    type: playlist
+    type: playlist   # playlist | channel | video
     enabled: true
+
 pipeline:
-  stages: [transcript, metadata, download, screenshots, clips, keypoints, tracker]
+  stages: [transcript, metadata, player_data, download, screenshots, clips, keypoints, tracker]
+  capture_mode: full          # full | audio | transcript
+  quality: 720p               # 480p | 720p | 1080p | best
+  key_moment_mode: smart      # smart | cues
   screenshot_offset: 3
   clip_duration: 16
+  clip_start_offset: -4
   max_clips: 8
   max_height: 720
   keep_video: false
+  segment_download: true
+  client_cycle: [android, ios, tv, web_safari, mweb]
+
 watch:
   poll_interval: 300
   max_workers: 3
+  archive_delay: 20
+  archive_timeout: 600
   auto_archive: true
-categories: [ai-agents, coding, productivity, business, seo, marketing, design]
+
+categories: [ai-agents, coding, productivity, business, seo, marketing, design, uncategorized]
 ```
 
 ---
 
 ## 🔧 Pipeline Stages
 
-Each stage can be toggled in config. Stages run in order:
-
 ```
-URL → [transcript] → [metadata] → [download] → [screenshots] → [clips] → [keypoints] → [tracker]
+URL → transcript → metadata → player_data → download → screenshots → clips → keypoints → tracker → omni
 ```
 
-| Stage | Required | Description |
-|-------|----------|-------------|
-| `transcript` | ✅ Yes | Fetch transcript (3-tier SSL fallback) |
-| `metadata` | Optional | Fetch title/channel/thumbnail via oEmbed |
-| `download` | Optional | Download 720p MP4 via yt-dlp |
-| `screenshots` | Needs download | ffmpeg screenshot at each visual cue |
-| `clips` | Needs download | ffmpeg clip extraction for demo moments |
-| `keypoints` | Optional | LLM extraction via `hermes -z` |
-| `tracker` | Optional | Append to master_tracker.csv |
+| Stage | Required | Output |
+|-------|----------|--------|
+| `transcript` | ✅ | `transcript.md` — timestamped + plain text |
+| `metadata` | Optional | `metadata.json` — title, channel, thumbnail |
+| `player_data` | Optional | chapters + heatmap merged into metadata |
+| `download` | Optional | segments around key moments via yt-dlp |
+| `screenshots` | Needs download | `screenshots/*.jpg` via ffmpeg |
+| `clips` | Needs download | `clips/*.mp4` via ffmpeg |
+| `keypoints` | Optional | `key-points.json` + `.md` via LLM |
+| `tracker` | Optional | row in `master_tracker.csv` |
+| `omni` | Auto | `omni.json` — always runs after tracker |
 
 ---
 
-## 🔒 Transcript SSL Fix (3-Tier Fallback)
+## 🔒 Transcript SSL Fix — 3-Tier Fallback
 
-The original tool failed on 26/31 batch runs due to `urllib3 v2 + LibreSSL 2.8.3` on Python 3.9/macOS. NuxTube v2 uses a 3-tier fallback:
+Python 3.9 + macOS LibreSSL 2.8.3 + urllib3 v2 = transcript failures. Fixed with a waterfall:
 
 ```
-Tier 1: youtube-transcript-api    (Python requests → urllib3 → TLS)
-         ↓ fails
-Tier 2: yt-dlp subtitle extract   (yt-dlp → its own HTTP stack)
-         ↓ fails
-Tier 3: curl timedtext API         (bypasses Python TLS entirely!)
+Tier 1: youtube-transcript-api   (Python → urllib3 → TLS)
+              ↓ fails
+Tier 2: yt-dlp subtitle extract  (yt-dlp's own HTTP stack)
+              ↓ fails
+Tier 3: curl timedtext API        (bypasses Python TLS entirely)
 ```
 
-**Tier 3** uses `curl` to fetch YouTube's timedtext XML API directly, completely bypassing Python's broken TLS stack. This works even when Python's `ssl` module is compiled against LibreSSL.
+Tier 3 hits YouTube's timedtext XML API directly via `curl`. Works everywhere.
 
 ---
 
-## ⚠️ Channel Watching — Disclaimer
+## 🧠 Smart Key Moments
 
-> **🚨 WARNING: Channel watching can be dangerous!**
-
-| Risk | Details |
-|------|---------|
-| ⚡ **Overload** | Channels can have hundreds/thousands of videos. Each download = 50-200MB. A 500-video channel = **25-100GB** storage + bandwidth. |
-| 💰 **Cost** | VPS bandwidth costs. API rate limits. Potential billing for excessive requests. |
-| ⚠️ **Harm to YouTuber** | Mass-downloading can trigger YouTube anti-scraping protections, potentially getting the channel **restricted or flagged**. |
-| ⚖️ **Legal/ToS** | Downloading may violate YouTube ToS. Re-distributing copyrighted content is **illegal**. |
-
-**Only use channel watching for:**
-- ✅ Your own channels
-- ✅ Public domain content
-- ✅ Content you have explicit permission to archive
-
-The interactive setup shows this disclaimer before allowing channel sources.
-
----
-
-## 🔌 Middleware API
-
-NuxTube is designed to be importable as a library for automation:
-
-### Single Video Archive
-
-```python
-from nuxtube.config import Config
-from nuxtube.archiver import ArchivePipeline
-
-# Load config
-config = Config.load("config.yaml")
-
-# Create pipeline
-pipeline = ArchivePipeline(config)
-
-# Archive a single video
-result = pipeline.archive("https://youtube.com/watch?v=...")
-
-# Check result
-print(result.status)        # "success" | "failed" | "partial" | "skipped"
-print(result.folder)        # Path to the archived video folder
-print(result.screenshot_count)
-print(result.clip_count)
-
-# With callbacks
-def on_log(level, msg):
-    print(f"[{level}] {msg}")
-
-def on_progress(stage, cur, total, msg):
-    print(f"  {stage}: {cur}/{total} — {msg}")
-
-result = pipeline.archive(url, on_log=on_log, on_progress=on_progress)
-```
-
-### Daemon Middleware (watcher + workers + status API)
-
-```python
-from nuxtube.middleware import NuxTubeDaemon
-from nuxtube.config import Config
-
-# Create and start daemon
-daemon = NuxTubeDaemon(Config.load("config.yaml"))
-daemon.start()                    # Starts watcher + worker threads
-
-# Queue videos manually
-daemon.queue_url("https://youtube.com/watch?v=...")
-
-# Query full status
-status = daemon.status()
-print(status["stats"]["total_archived"])
-print(status["queue"]["count"])
-
-# Control the watcher
-daemon.pause()
-daemon.resume()
-daemon.retry_failed()
-daemon.check_now()
-daemon.skip_worker(0)
-
-# Subscribe to events
-def on_event(event_type, data):
-    if event_type == "completed":
-        print(f"Done: {data['title']}")
-    elif event_type == "failed":
-        print(f"Failed: {data['title']}")
-
-daemon.subscribe(on_event)
-
-# Graceful shutdown
-daemon.stop()
-```
-
-### Architecture
+Three signals combined — not just "as you can see" phrases:
 
 ```
-┌──────────────────────────────────────────────────┐
-│                  NuxTubeDaemon                    │
-│                                                   │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐       │
-│  │ Watcher  │  │ Worker 0 │  │ Worker 1 │  ...   │
-│  │ (thread) │  │ (thread) │  │ (thread) │       │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘       │
-│       │              │              │              │
-│       v              v              v              │
-│  ┌─────────────────────────────────────────┐     │
-│  │            Shared State (locked)         │     │
-│  │  queue, workers, completed, log, stats  │     │
-│  └─────────────────────────────────────────┘     │
-│       ^                                           │
-│  ┌────┴────────────────────────────────────┐     │
-│  │              API Layer                   │    │
-│  │  status(), queue_url(), pause(),         │    │
-│  │  resume(), retry(), subscribe()          │    │
-│  └──────────────────────────────────────────┘    │
-└───────────────────────────────────────────────────┘
-          ^                    ^
-          │                    │
-   ┌──────┴──────┐     ┌──────┴──────┐
-   │  TUI (Rich)  │     │  Web Dash   │
-   │  (terminal)  │     │  (HTTP API) │
-   └─────────────┘     └─────────────┘
+📑 YouTube chapters  +  🔥 Viewer heatmap peaks  +  📝 Transcript visual cues
+         ↓                        ↓                           ↓
+         └────────────────────────┴───────────────────────────┘
+                                  ↓
+                Score → deduplicate (10s window) → top N moments
 ```
 
----
-
-## 🖥️ Daemon Mode
-
-Run NuxTube as a headless daemon — no TUI, just background processing:
-
-```bash
-# Start daemon (headless)
-python3 nuxtube.py --daemon
-
-# Start daemon with web dashboard
-python3 nuxtube.py --daemon --web 8080
-
-# Query daemon status from another terminal
-python3 nuxtube.py --status
-
-# Or query the API directly
-curl http://localhost:8080/api/status | python3 -m json.tool
-```
-
-Daemon outputs:
-```
-  NuxTube daemon running (PID 12345)
-  Workers: 3
-  Sources: 2
-  Poll:    300s
-  Output:  ./youtube_videos
-
-  Dashboard: http://localhost:8080
-  API:       http://localhost:8080/api/status
-```
+Then `segment_download: true` downloads only those segments — typically ~25x less data than the full video.
 
 ---
 
 ## 🌐 Web Dashboard
 
-A built-in single-page web dashboard — zero dependencies, just Python stdlib:
+Stdlib HTTP server. No bundler, no React, no external deps.
 
 ```bash
-# Web dashboard alongside TUI
-python3 nuxtube.py --web 8080
-
-# Web dashboard with headless daemon
 python3 nuxtube.py --daemon --web 8080
+# Dashboard:   http://localhost:8080
+# Viewer:      http://localhost:8080/viewer
+# Videos API:  http://localhost:8080/api/videos
+# OmniFile:    http://localhost:8080/api/omni?video_id=<id>
 ```
 
-Then open `http://localhost:8080` in any browser. Features:
+Features: live stats, worker progress, archive browser with thumbnails and filter, viewer links in completed table, "Generate All OmniFiles" button, queue from browser, color-coded log.
 
-- 📊 Live stats (archived, failed, queued, uptime)
-- 👀 Watcher status (sources, last check, paused/active)
-- ⚙️ Worker progress bars with stage indicators
-- 📋 Queue display
-- ✅ Completed videos table
-- 📝 Color-coded live log
-- 🎛️ Control buttons (pause, resume, retry, check now, skip)
-- 📥 URL input to queue videos from the browser
+**REST API:**
 
-### REST API
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/status` | Full daemon status (workers, queue, log, stats) |
-| `GET` | `/api/results` | Recent archive results |
-| `GET` | `/api/log` | Recent log lines |
-| `GET` | `/api/health` | Health check |
-| `POST` | `/api/queue` | Add video to queue `{"url": "...", "title": "..."}` |
-| `POST` | `/api/pause` | Pause watcher |
-| `POST` | `/api/resume` | Resume watcher |
-| `POST` | `/api/retry` | Retry failed videos |
-| `POST` | `/api/skip` | Skip worker `{"worker": 0}` |
-| `POST` | `/api/check` | Force playlist check now |
-
-```bash
-# Queue a video from the command line
-curl -X POST http://localhost:8080/api/queue \
-  -H "Content-Type: application/json" \
-  -d '{"url": "https://youtube.com/watch?v=..."}'
-
-# Pause the watcher
-curl -X POST http://localhost:8080/api/pause
-
-# Get status as JSON
-curl http://localhost:8080/api/status | python3 -m json.tool
-```
-
----
-
-## 🧠 Player Data — Smart Key Moments
-
-NuxTube extracts **YouTube player data** — the same data you see in the player UI — to intelligently identify key moments WITHOUT downloading the entire video.
-
-### What We Extract
-
-| Data | Source | What It Tells Us |
-|------|--------|------------------|
-| 📑 **Chapters** | Creator-defined segments | Structured content breakdown (e.g., "Intro", "Demo", "Q&A") |
-| 🔥 **Heatmap** | YouTube viewer engagement | Most-replayed moments — where viewers found the most value |
-| 📊 **View/Like counts** | Video metadata | Popularity / quality signal |
-| 🎵 **Audio formats** | Available streams | Audio-only download options |
-
-### Smart Key Moment Detection
-
-Instead of blindly screenshotting at every "as you can see" phrase, the **smart mode** combines three signals:
-
-```
-  📑 Chapter boundaries  +  🔥 Heatmap peaks  +  📝 Transcript visual cues
-           ↓                        ↓                      ↓
-           └────────────────────────┴──────────────────────┘
-                                    ↓
-                    Score, deduplicate, rank by heat
-                                    ↓
-                         🎯 Top N key moments
-```
-
-1. **Chapter boundaries** — Creator-curated structure (start of each section)
-2. **Heatmap peaks** — Viewer-validated interesting moments (top 15 by engagement)
-3. **Visual cues** — Transcript phrases like "as you can see" (original method)
-4. **Score & rank** — Moments that appear in multiple sources get boosted
-5. **Deduplicate** — Collapse moments within 10 seconds of each other
-6. **Top N** — Return the best moments for screenshots + clips
-
-### Segment Download (Skip the Full Video!)
-
-When `segment_download: true` (default), NuxTube downloads **only the segments around key moments** — not the entire video. This uses yt-dlp's `--download-sections` flag.
-
-```
-Full video (500MB):     ████████████████████████████████████  100%
-Segment download (20MB):  ██     ██       ██  ██     ██          ~4%
-                         ^      ^        ^   ^      ^
-                      chapter  heatmap  cue chapter heatmap
-```
-
-This means:
-- ⚡ **25x less bandwidth** on typical videos
-- 💾 **25x less disk space** for temp files
-- 🚀 **Much faster** — no need to download the whole video
-- 🎯 **Same quality** screenshots + clips from the key moments
-
-### Player Data in metadata.json
-
-```json
-{
-  "player_data": {
-    "has_chapters": true,
-    "has_heatmap": true,
-    "chapter_count": 17,
-    "heatmap_count": 100,
-    "chapters": [{"start_time": 0, "end_time": 55, "title": "The Seven Levels Explained"}, ...],
-    "heatmap": [{"start_time": 0, "end_time": 8.86, "value": 0.17}, ...],
-    "view_count": 65148,
-    "like_count": 1316
-  },
-  "capture_mode": "full",
-  "quality": "720p",
-  "key_moment_mode": "smart"
-}
-```
+| Method | Endpoint | Does |
+|--------|----------|------|
+| GET | `/viewer` | HTML viewer (API mode, loads by `?video_id=`) |
+| GET | `/api/status` | Full daemon state |
+| GET | `/api/videos` | All archived videos, newest first |
+| GET | `/api/omni?video_id=X` | OmniFile JSON + `_web_base_url` for media |
+| GET | `/files/<path>` | Static screenshots/clips from output dir |
+| GET | `/api/results` | Recent archive results |
+| GET | `/api/health` | Health check |
+| POST | `/api/queue` | Add URL `{"url": "..."}` |
+| POST | `/api/pause` | Pause watcher |
+| POST | `/api/resume` | Resume watcher |
+| POST | `/api/retry` | Retry all failed |
+| POST | `/api/skip` | Skip worker `{"worker": 0}` |
+| POST | `/api/check` | Force playlist check |
+| POST | `/api/generate-omni` | Batch generate OmniFiles (background) |
 
 ---
 
 ## 🎥 Capture Modes
 
-Choose what to download per video — from full video to transcript-only:
+| Mode | Downloads | Output | Use for |
+|------|-----------|--------|---------|
+| `full` | Video segments | Screenshots + clips + transcript + keypoints | Default |
+| `audio` | Audio only | MP3 + transcript + keypoints | Podcasts, talks |
+| `transcript` | Nothing | Transcript + metadata + keypoints | Fast research |
 
-| Mode | Downloads | Output | Bandwidth | Use Case |
-|------|-----------|--------|-----------|----------|
-| `full` | Video + audio | Screenshots + clips + transcript + keypoints | Medium (segment) / High (full) | Default — full archive |
-| `audio` | Audio only | MP3 + transcript + keypoints | Low | Podcasts, talks, music |
-| `transcript` | Nothing | Transcript + metadata + keypoints only | Minimal | Fast scanning, research |
+---
 
-### Quality Options (for `full` mode)
+## 🔌 Middleware API
 
-| Quality | Resolution | Bandwidth |
-|---------|-----------|-----------|
-| `480p` | 854×480 | ~2-5 MB/min |
-| `720p` | 1280×720 | ~5-10 MB/min |
-| `1080p` | 1920×1080 | ~10-20 MB/min |
-| `best` | Max available | Max |
+Fully importable as a Python library.
 
-### Config Example
+```python
+from nuxtube.config import Config
+from nuxtube.archiver import ArchivePipeline
 
-```yaml
-pipeline:
-  capture_mode: full          # full | audio | transcript
-  quality: 720p               # 480p | 720p | 1080p | best
-  key_moment_mode: smart      # smart (chapters+heatmap+cues) | cues (original)
-  segment_download: true      # Download only key segments, not full video
+pipeline = ArchivePipeline(Config.load("config.yaml"))
+result = pipeline.archive("https://youtube.com/watch?v=...")
+
+print(result.status)           # success | failed | partial | skipped
+print(result.folder)           # /path/to/archive/folder
+print(result.screenshot_count)
 ```
 
-### CLI Override
+```python
+from nuxtube.middleware import NuxTubeDaemon
 
-```bash
-# Force audio-only mode for a single archive
-python3 nuxtube.py --archive URL --category coding
-# (capture_mode is read from config.yaml — edit it to change modes)
+daemon = NuxTubeDaemon(Config.load("config.yaml"))
+daemon.start()
+
+daemon.queue_url("https://youtube.com/watch?v=...")
+status = daemon.status()
+
+daemon.subscribe(lambda event, data: print(event, data["title"]))
+daemon.stop()
+```
+
+```python
+from nuxtube.omni import write_omni
+from nuxtube.viewer import generate_viewer
+
+write_omni("/path/to/folder")
+generate_viewer("/path/to/folder")               # live
+generate_viewer("/path/to/folder", bake=True)    # baked
 ```
 
 ---
 
-## 🐛 Bug Fixes from v1
+## ⚠️ Channel Watching — Read This First
 
-The original `archive_video.py` had several critical bugs. All fixed in v2:
+| Risk | What actually happens |
+|------|-----------------------|
+| ⚡ **Overload** | 500-video channels = 25–100GB of storage |
+| 💰 **Cost** | VPS bandwidth costs real money |
+| ⚠️ **YouTuber harm** | Mass downloading can trigger protections on the channel |
+| ⚖️ **Legal** | Downloading may violate YouTube ToS. Redistribution is illegal |
 
-| # | Bug | Impact | Fix |
-|---|-----|--------|-----|
-| 1 | `parse_ts` regex broke on videos ≥ 1hr | Zero screenshots/clips for long videos | New regex handles `H:MM:SS` format |
-| 2 | `batch_extract_keypoints.py` wrong BASE path | Script crashes immediately | Fixed path to use relative resolution |
-| 3 | Parallel workers race on `master_tracker.csv` | CSV corruption | Thread-safe `TrackerCSV` with `threading.Lock` |
-| 4 | Temp file collision in parallel mode | Workers clobber each other | `tempfile.mkstemp()` for unique paths |
-| 5 | urllib3 v2 + LibreSSL = batch failures | 26/31 videos failed | 3-tier SSL fallback (curl bypasses Python TLS) |
-| 6 | Temp MP4 not cleaned up on download failure | Disk leak | `finally` block always cleans up |
-| 7 | yt-dlp fallback missing duration/segment_count | Metadata incomplete | Fallback now returns all fields |
-| 8 | Status always "Done" in CSV | Misleading | Status reflects actual result |
-| 9 | 44% of videos got 0 clips | Missing demo moments | Broader context window (5 segments, not 1) |
-| 10 | Redundant double API call for transcript | Wasted requests | Single fetch, parse once |
-| 11 | ffmpeg no timeout | Hung processes | 30-60s timeouts on all ffmpeg calls |
-| 12 | `esc()` didn't escape backslashes | CSV formula errors | Proper escaping |
-| 13 | Duplicate key-point IDs | JSON validation fails | Deduplication in extraction |
-| 14 | `find_video_folder` missed categories | Can't find videos in custom categories | Dynamic category discovery |
+Only use channel watching for: your own channels, public domain content, or content you have explicit permission to archive. Setup wizard requires confirmation before adding channel sources.
 
 ---
 
@@ -577,52 +410,71 @@ The original `archive_video.py` had several critical bugs. All fixed in v2:
 
 ```
 NeuroD-NuxTube/
-├── nuxtube.py              # Entry point (CLI + TUI launcher)
-├── config.yaml             # Generated by first-run setup (gitignored)
-├── requirements.txt
-├── LICENSE
-├── README.md               # You are here
-├── brainstorm_init          # Original PRD for parent AgenticOS project
-├── nuxtube/                 # Python package
-│   ├── __init__.py
-│   ├── config.py            # Config dataclass + interactive setup wizard
-│   ├── transcript.py        # 3-tier transcript fetching (SSL fix)
-│   ├── player_data.py       # YouTube chapters + heatmap + segment download
-│   ├── media.py             # Video download, screenshots, clips
-│   ├── keypoints.py         # LLM key-point extraction
-│   ├── tracker.py           # Thread-safe CSV tracker
-│   ├── archiver.py          # Pipeline orchestration + stage selection
-│   ├── watcher.py           # Playlist/channel monitoring + disclaimers
-│   ├── middleware.py        # Headless daemon core (status API, event system)
-│   ├── dashboard.py         # Web dashboard + REST API (zero-dep HTTP server)
-│   └── tui.py               # Rich multi-panel dashboard
-├── youtube_videos/          # Output directory (gitignored)
-│   ├── _tools/              # Legacy v1 scripts (kept for reference)
-│   ├── _test_data/          # 27 test videos from v1 (gitignored)
-│   └── README.md            # Library README
+├── nuxtube.py              # Entry point — CLI, TUI, daemon
+├── config.yaml             # Your settings (gitignored)
+├── test_config.yaml        # Minimal config — try the TUI now
+├── nuxtube/
+│   ├── __init__.py         # Version (2.3.0)
+│   ├── config.py           # Config dataclass + setup wizard
+│   ├── transcript.py       # 3-tier transcript fetch + SSL fix
+│   ├── player_data.py      # YouTube chapters + heatmap + segment download
+│   ├── media.py            # yt-dlp download, ffmpeg screenshots + clips
+│   ├── keypoints.py        # LLM key-point extraction via hermes
+│   ├── tracker.py          # Thread-safe CSV tracker
+│   ├── archiver.py         # Pipeline orchestration — 9 stages
+│   ├── watcher.py          # Playlist/channel monitoring
+│   ├── middleware.py       # Headless daemon — workers + status API
+│   ├── dashboard.py        # Web dashboard + REST API (stdlib only)
+│   ├── tui.py              # Rich TUI — options, navigation, detail view
+│   ├── omni.py             # OmniFile generator
+│   └── viewer.py           # HTML viewer generator
+└── youtube_videos/         # Archive output (gitignored)
+    └── <category>/<slug>/
+        ├── metadata.json
+        ├── transcript.md
+        ├── key-points.json + .md
+        ├── omni.json           ← auto-generated
+        ├── viewer.html         ← auto-generated or via --viewer
+        ├── screenshots/*.jpg
+        ├── clips/*.mp4
+        ├── _screenshots_manifest.json
+        └── _clips_manifest.json
 ```
+
+---
+
+## 🐛 Bugs Fixed from v1
+
+| Bug | Impact | Fix |
+|-----|--------|-----|
+| `parse_ts` broke on videos ≥ 1hr | Zero screenshots for long videos | Handles `H:MM:SS` |
+| Wrong BASE path in batch script | Crash on startup | Fixed path resolution |
+| Parallel workers race on CSV | File corruption | `threading.Lock` on all writes |
+| Temp file collision in parallel | Workers clobber each other | `tempfile.mkstemp()` |
+| urllib3 v2 + LibreSSL failures | 26/31 videos failed | 3-tier SSL fallback |
+| Temp MP4 not cleaned on failure | Disk leak | `finally` block always runs |
+| Status always "Done" in CSV | Misleading tracking | Reflects actual result |
+| 44% of videos got 0 clips | Missing demo moments | 5-segment context window |
+| `subprocess` missing in archiver | Crash in segment+screenshot mode | Top-level import |
+| Redundant double transcript fetch | Wasted API calls | Single fetch |
+| ffmpeg no timeout | Hung processes | 30–60s timeouts everywhere |
 
 ---
 
 ## 🤝 Contributing
 
-1. Fork the repo
-2. Create a feature branch: `git checkout -b my-feature`
-3. Test with: `python3 nuxtube.py --archive "https://youtube.com/watch?v=dQw4w9WgXcQ"`
-4. Submit a PR
-
-### Running Tests
-
 ```bash
-# Syntax check all modules
+# Syntax check
 python3 -m py_compile nuxtube/*.py
 
-# Test transcript fetching
-python3 -c "from nuxtube.transcript import fetch_transcript; print(fetch_transcript('dQw4w9WgXcQ'))"
+# Test a single archive
+python3 nuxtube.py --archive "https://youtube.com/watch?v=dQw4w9WgXcQ"
 
-# Test single archive
-python3 nuxtube.py --archive "https://youtube.com/watch?v=dQw4w9WgXcQ" --no-media
+# Try the TUI
+python3 nuxtube.py --config test_config.yaml
 ```
+
+PRs welcome. No new dependencies unless they genuinely earn their place.
 
 ---
 
@@ -632,4 +484,4 @@ python3 nuxtube.py --archive "https://youtube.com/watch?v=dQw4w9WgXcQ" --no-medi
 
 ---
 
-> ⚠️ **Disclaimer**: This tool is for archiving content you own or have permission to archive. Downloading YouTube videos may violate YouTube's Terms of Service. Always respect copyright and creator rights.
+> ⚠️ **Disclaimer:** For archiving content you own or have permission to archive. Respect creator rights and YouTube ToS.

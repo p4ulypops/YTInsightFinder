@@ -1,211 +1,104 @@
-# YouTube Videos — Transcript & Visual Reference Library
+# 📚 YouTube Videos — Archive Library
 
-This folder archives YouTube videos as **searchable transcripts plus the actual on-screen
-visuals** (screenshots + short clips), organised by category. Every video the speaker says
-"as you can see…", "look at this chart…", "if you look here…" gets that exact frame captured.
-
----
-
-## TL;DR — one command does everything
-
-```
-python3 _tools/archive_video.py "https://www.youtube.com/watch?v=VIDEO_ID"
-```
-
-That single command performs the **entire workflow** described below: fetches the transcript,
-pulls metadata, auto-picks a category, downloads the video to a temp file, scans for visual-cue
-phrases, grabs a screenshot at each one, extracts short clips of the high-value demo moments,
-writes the manifests + `transcript.md` (with a Visual References table), and deletes the temp MP4.
-
-Options:
-
-```
-python3 _tools/archive_video.py "<URL>" --category seo     # force a category folder
-python3 _tools/archive_video.py "<URL>" --keep-video       # also save source.mp4 in the folder
-python3 _tools/archive_video.py "<URL>" --no-media          # transcript + metadata only (no download)
-python3 _tools/archive_video.py "<URL>" --max-clips 12      # cap number of clips (default 8)
-```
-
-After it runs, **eyeball the auto-selected clips** — the keyword heuristic is decent, but a human
-(or a quick vision pass) picks better demo moments. Swap/add clips manually if needed (see step 4).
-
----
-
-## What "exactly what you did" means (the full procedure)
-
-This is the canonical procedure. The script automates it; this section is the source of truth if
-you ever need to do it by hand, debug the script, or extend it.
-
-### 1. Fetch transcript + metadata
-
-Transcript via the **`youtube-content`** Hermes skill:
-
-```
-python3 /Users/user/.hermes/skills/media/youtube-content/scripts/fetch_transcript.py "<URL>"                       # JSON: video_id, segment_count, duration, full_text
-python3 /Users/user/.hermes/skills/media/youtube-content/scripts/fetch_transcript.py "<URL>" --text-only --timestamps   # "M:SS text" lines
-```
-
-Title / channel / thumbnail via YouTube oEmbed:
-
-```
-curl -s "https://www.youtube.com/oembed?url=<URL>&format=json"
-```
-
-### 2. Decide the category & create the folder
-
-Pick the category from the video's actual subject. **Add new categories freely** — create a new
-lowercase, hyphenated folder (`seo`, `productivity`, `coding`, `marketing`, `business`, …) whenever
-a video doesn't fit an existing one. Then:
-
-```
-<category>/<video-title-slug>/        # slug = lowercase title, punctuation stripped, hyphenated
-```
-
-### 3. Download the video (temp only)
-
-```
-cd /tmp && python3 -m yt_dlp --extractor-args "youtube:player_client=android" \
-  -f "best[height<=720]/best" --merge-output-format mp4 -o "yt_<id>.%(ext)s" "<URL>"
-```
-
-If you hit `HTTP 403 Forbidden`, cycle the client: **android → ios → tv → web_safari → mweb**.
-720p is plenty for screenshots and keeps the temp file small.
-
-### 4. Find visual-cue moments → screenshots + clips
-
-Scan the timestamped transcript for visual-cue phrases ("as you can see", "you can see",
-"if you look", "look at this", "over here", "right here", "on the screen", "this dashboard",
-"this chart", "according to", "as shown", …). **Collapse cues within ~8s** of each other into one
-moment.
-
-**Screenshots** — grab a frame **~3s after** each cue (lets the on-screen visual settle):
-
-```
-ffmpeg -y -ss <sec+3> -i /tmp/yt_<id>.mp4 -frames:v 1 -q:v 3 screenshots/NN_MMmSSs.jpg
-```
-
-**Clips** — only for genuinely high-value demos (dashboard reveals, diagrams, live walkthroughs,
-charts/graphs). ~10–16s each, re-encoded small:
-
-```
-ffmpeg -y -ss <start> -i /tmp/yt_<id>.mp4 -t <dur> -c:v libx264 -preset veryfast -crf 26 \
-  -c:a aac -b:a 96k -movflags +faststart clips/MMmSSs_<slug>.mp4
-```
-
-**Verify** screenshots actually show demo content (use the vision tool) — skip pure talking-head
-frames where it matters.
-
-### 5. Write manifests + transcript.md
-
-- `_screenshots_manifest.json` — every screenshot: index, timestamp, cue, spoken context, path.
-- `_clips_manifest.json` — every clip: start, duration, description, path.
-- `transcript.md` — header block (channel, URL, duration, category, fetch date, thumbnail), then
-  the timestamped transcript, then the plain-text transcript, then a **## Visual References**
-  section: a "Key clips" list + a screenshots table linking each row to its YouTube deep-link
-  (`<URL>&t=<sec>s`).
-- `metadata.json` — sidecar with `title`, `video_id`, `url`, `channel`, `channel_url`, `category`,
-  `duration`, `segment_count`, `thumbnail_url`, `fetched_at`, `source`, `files`, and a `media`
-  block (screenshot/clip counts + manifest paths).
-
-### 6. Clean up
-
-**Delete the temp MP4** (`rm /tmp/yt_<id>.mp4`) unless `--keep-video` was requested. Only the small
-JPGs + clips stay in the repo (a full video is ~1.6 MB screenshots + ~2.5 MB clips vs a 66 MB MP4).
+> **Searchable transcripts + key-moment screenshots + clips + LLM notes + HTML viewers. One folder per video. Everything in one place.**
 
 ---
 
 ## Folder structure
 
+Each archived video lives at `<category>/<slug>/`:
+
 ```
-youtube_videos/
-├── README.md                          ← this file (the convention + instructions)
-├── _tools/
-│   ├── archive_video.py               ← one-command archiver (runs the whole procedure)
-│   ├── extract_keypoints.py           ← LLM-powered key-point extraction (human MD + machine JSON)
-│   ├── batch_extract_keypoints.py     ← batch extract for all videos missing key points
-│   ├── build_tracker_csv.py           ← builds master_tracker.csv for Google Sheets
-│   └── GOOGLE_SHEETS_HANDOFF.md       ← paste-to-Gemini guide to build the tracker dashboard
-├── master_tracker.csv                 ← Sheets-ready tracker (1 row per video, inline thumbnails)
-└── <category>/                        ← e.g. ai-agents, seo, productivity ...
-    └── <video-title-slug>/            ← one folder per video
-        ├── transcript.md              ← MD transcript (timestamped + plain text + Visual References)
-        ├── key-points.md              ← Human-readable key lessons (rich emoji markdown)
-        ├── key-points.json            ← Machine-readable key lessons (structured JSON for AI)
-        ├── metadata.json              ← metadata sidecar (title, channel, id, url, media counts)
-        ├── screenshots/               ← JPG frame grabs at every visual-cue moment
-        │   └── NN_MMmSSs.jpg
-        ├── clips/                     ← short MP4 clips of high-value demo moments
-        │   └── MMmSSs_<slug>.mp4
-        ├── _screenshots_manifest.json ← index of every screenshot (timestamp, cue, context)
-        └── _clips_manifest.json       ← index of every clip (start, duration, description)
+ai-agents/claude-code-agentic-os/
+├── metadata.json            ← title, channel, duration, thumbnail, chapters, heatmap
+├── transcript.md            ← timestamped + plain text transcript
+├── key-points.json          ← LLM-extracted lessons (structured)
+├── key-points.md            ← same, human-readable
+├── omni.json                ← everything merged into one portable JSON
+├── viewer.html              ← open this in browser to browse the archive
+├── screenshots/
+│   ├── 01m23s.jpg
+│   └── 04m55s.jpg
+├── clips/
+│   ├── seg_00_01m20s.mp4
+│   └── seg_01_04m52s.mp4
+├── _screenshots_manifest.json
+└── _clips_manifest.json
 ```
 
 ---
 
-## Key-Point Extraction
+## Open a video in the viewer
 
-Every archived video gets two additional files with extracted lessons and key takeaways:
+**Option 1 — local server (recommended):**
+```bash
+cd ai-agents/claude-code-agentic-os
+python3 -m http.server 9000
+# Open: http://localhost:9000/viewer.html
+```
 
-### `key-points.md` — Human-readable (rich emoji markdown)
+**Option 2 — baked viewer (works directly from file://):**
+```bash
+# From project root:
+python3 nuxtube.py --viewer ./youtube_videos/ai-agents/claude-code-agentic-os --bake
+# Then just double-click viewer.html
+```
 
-Scannable, fun, emoji-rich. Organised by category with importance indicators (🔥 high / ⭐ medium / 💡 low).
-Includes timestamps, tags, and a one-paragraph summary at the top.
+**Option 3 — web dashboard (all videos in one place):**
+```bash
+python3 nuxtube.py --daemon --web 8080
+# Open: http://localhost:8080
+# Archive browser shows all videos with thumbnails + search
+```
 
-### `key-points.json` — Machine-readable (structured JSON)
+---
 
-Optimised for AI ingestion. Each key point has: id, timestamp, category, title, lesson, tags, importance.
-The file includes a `video` block with metadata and a `summary` field.
-
-### Running extraction
+## Generate OmniFiles / Viewers for all existing videos
 
 ```bash
-# Extract for a single video
-python3 _tools/extract_keypoints.py <category>/<video-slug>
-
-# Batch extract for all videos missing key points
-python3 _tools/batch_extract_keypoints.py
+# From project root:
+python3 nuxtube.py --omni-all            # writes omni.json to every folder
+python3 nuxtube.py --viewer-all          # writes live viewer.html to every folder
+python3 nuxtube.py --viewer-all --bake   # baked (self-contained) viewers
 ```
 
-Key-point extraction is **on by default** when archiving new videos. Use `--no-key-points` to skip it:
+---
+
+## Archive a new video
 
 ```bash
-python3 _tools/archive_video.py "<URL>" --no-key-points
+# From project root:
+python3 nuxtube.py --archive "https://youtube.com/watch?v=VIDEO_ID"
+python3 nuxtube.py --archive "https://youtube.com/watch?v=VIDEO_ID" --category coding
 ```
 
-The extraction uses `hermes -z` (one-shot LLM call) to analyse the transcript and pull out the most
-actionable, concrete lessons — prioritising business, coding, and AI-agent insights over fluff.
+Or just launch the TUI and queue it from there:
+```bash
+python3 nuxtube.py
+# Press 'a' to add a URL, 'o' for settings
+```
 
 ---
 
-## Batch mode
+## Categories
 
-Multiple URLs? Run the archiver per URL (loop), or hand the list to Hermes and ask it to fan out
-parallel agents — one per video — each running `_tools/archive_video.py`.
+| Category | What goes here |
+|----------|---------------|
+| `ai-agents` | AI agents, orchestration, LLMs, Claude, Hermes |
+| `coding` | Python, JS, APIs, debugging, dev tools |
+| `productivity` | Workflows, Notion, Obsidian, PKM |
+| `business` | Revenue, startups, clients, agencies |
+| `seo` | Search, keywords, ranking, backlinks |
+| `marketing` | Ads, funnels, audience, campaigns |
+| `design` | UI, UX, Figma, CSS |
+| `uncategorized` | Auto-assigned when nothing matches |
 
-## Tracker spreadsheet (Google Sheets)
-
-A watchable dashboard over the whole library lives in `master_tracker.csv` (one row per video,
-inline thumbnails, clickable titles/channels/folders). Build / refresh it with:
-
-```
-python3 _tools/build_tracker_csv.py                    # rebuild from current folders
-python3 _tools/archive_video.py "<URL>" --csv-append   # archive a video AND refresh the CSV
-```
-
-To build the live dashboard in Google Sheets with Gemini, follow `_tools/GOOGLE_SHEETS_HANDOFF.md`
-(paste it into Gemini — it has the import steps, the dropdown/colour/summary prompts, and the note
-on making your own screenshots render via a public URL).
+Auto-classification uses keyword scoring against the title + transcript. Tune in `config.yaml → categories`.
 
 ---
 
-## Dependencies (already installed on this machine)
+## master_tracker.csv
 
-- `youtube-transcript-api` — transcript fetch (`python3 -m pip install youtube-transcript-api`)
-- `yt-dlp` — video download (`python3 -m pip install yt-dlp`; invoke as `python3 -m yt_dlp`)
-- `ffmpeg` — screenshot + clip extraction
+Every archived video gets a row with: thumbnail (image formula), title (hyperlink), channel, category, duration, screenshots count, clips count, folder path, date, status.
 
----
-
-## Categories so far
-
-- **ai-agents** — building/orchestrating AI agents, agent operating systems, agent tooling.
+Google Sheets: `File → Import → master_tracker.csv` — thumbnails and links render automatically.
