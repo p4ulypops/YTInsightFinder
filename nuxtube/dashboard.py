@@ -23,6 +23,7 @@ Usage:
   curl http://localhost:8080/api/status      # Query status from scripts
 """
 import json
+import mimetypes
 import os
 import sys
 import threading
@@ -131,6 +132,21 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <div id="completed"></div>
 </div>
 
+<div class="panel" style="margin-bottom: 12px;">
+  <h2 style="display:flex;justify-content:space-between;align-items:center;">
+    📂 Archive Browser
+    <span style="font-size:11px;color:var(--dim);font-weight:400;">
+      <a href="/viewer" target="_blank" style="color:var(--accent);">Open standalone viewer ↗</a>
+    </span>
+  </h2>
+  <div style="margin-bottom:8px;">
+    <input id="search-archive" placeholder="Filter by title or category..."
+      style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;"
+      oninput="filterArchive(this.value)">
+  </div>
+  <div id="archive-list" style="max-height:400px;overflow-y:auto;"></div>
+</div>
+
 <div class="panel">
   <h2>📝 Live Log</h2>
   <div class="log" id="log"></div>
@@ -211,8 +227,67 @@ async function api(action) {
   await fetch('/api/' + action, {method:'POST'});
 }
 
+// ── Archive browser ──
+let _allVideos = [];
+async function loadArchive() {
+  try {
+    const r = await fetch('/api/videos');
+    const d = await r.json();
+    _allVideos = d.videos || [];
+    renderArchive(_allVideos);
+  } catch(e) {}
+}
+function filterArchive(q) {
+  if (!q.trim()) { renderArchive(_allVideos); return; }
+  const lq = q.toLowerCase();
+  renderArchive(_allVideos.filter(v =>
+    (v.title||'').toLowerCase().includes(lq) ||
+    (v.category||'').toLowerCase().includes(lq) ||
+    (v.channel||'').toLowerCase().includes(lq)
+  ));
+}
+function renderArchive(videos) {
+  const el = document.getElementById('archive-list');
+  if (!videos.length) { el.innerHTML='<span class="dim">No archived videos found.</span>'; return; }
+  el.innerHTML = videos.map(v => {
+    const thumb = v.thumbnail_url
+      ? `<img src="${v.thumbnail_url}" style="width:80px;height:45px;object-fit:cover;border-radius:4px;flex-shrink:0;" onerror="this.style.display='none'">`
+      : `<div style="width:80px;height:45px;background:var(--border);border-radius:4px;flex-shrink:0;"></div>`;
+    const catBadge = v.category ? `<span class="badge badge-blue" style="font-size:10px;">${v.category}</span>` : '';
+    const dur = v.duration ? `<span class="dim" style="font-size:11px;">${v.duration}</span>` : '';
+    const ssInfo = v.screenshot_count ? `${v.screenshot_count} SS` : '';
+    const clInfo = v.clip_count ? `${v.clip_count} clips` : '';
+    const omniBadge = v.has_omni ? '<span style="color:var(--green);font-size:10px;">●omni</span>' : '';
+    return `
+      <div style="display:flex;gap:10px;align-items:center;padding:8px;border-bottom:1px solid var(--border);">
+        <a href="/viewer?video_id=${encodeURIComponent(v.video_id)}" target="_blank">${thumb}</a>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+            <a href="/viewer?video_id=${encodeURIComponent(v.video_id)}" target="_blank"
+               style="color:var(--text);text-decoration:none;"
+               onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--text)'">
+              ${(v.title||'Unknown').substring(0,60)}
+            </a>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:3px;flex-wrap:wrap;">
+            ${catBadge} ${dur}
+            ${ssInfo?`<span class="dim" style="font-size:11px;">${ssInfo}</span>`:''}
+            ${clInfo?`<span class="dim" style="font-size:11px;">${clInfo}</span>`:''}
+            ${omniBadge}
+          </div>
+        </div>
+        <div style="flex-shrink:0;">
+          <a href="/viewer?video_id=${encodeURIComponent(v.video_id)}" target="_blank"
+             style="font-size:11px;color:var(--accent);white-space:nowrap;">View ↗</a>
+        </div>
+      </div>`;
+  }).join('');
+}
+
 fetchStatus();
 setInterval(fetchStatus, 2000);
+loadArchive();
+setInterval(loadArchive, 30000);
 </script>
 </body>
 </html>"""
@@ -245,18 +320,61 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _serve_file(self, abs_path: str):
+        """Serve a static file with correct MIME type."""
+        mime, _ = mimetypes.guess_type(abs_path)
+        mime = mime or "application/octet-stream"
+        try:
+            size = os.path.getsize(abs_path)
+            self.send_response(200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(size))
+            self.send_header("Cache-Control", "max-age=3600")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            with open(abs_path, "rb") as f:
+                while True:
+                    chunk = f.read(65536)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+        except Exception as e:
+            self._json({"error": str(e)}, 500)
+
+    def _resolve_static(self, rel: str) -> Optional[str]:
+        """Resolve a /files/ relative path to absolute, checking it's within output_dir."""
+        if not self.daemon:
+            return None
+        out_dir = os.path.realpath(self.daemon.config.output_dir)
+        # Strip leading slashes and sanitize
+        parts = [p for p in rel.split("/") if p and p not in ("..", ".")]
+        if not parts:
+            return None
+        abs_path = os.path.realpath(os.path.join(out_dir, *parts))
+        if not abs_path.startswith(out_dir + os.sep) and abs_path != out_dir:
+            return None
+        if not os.path.isfile(abs_path):
+            return None
+        return abs_path
+
     def do_GET(self):
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
+        qs = parse_qs(parsed.query)
 
         if path == "/" or path == "/index.html":
             self._html(DASHBOARD_HTML)
+
+        elif path == "/viewer":
+            from .viewer import VIEWER_HTML
+            self._html(VIEWER_HTML)
 
         elif path == "/api/status":
             self._json(self.daemon.status() if self.daemon else {"error": "no daemon"})
 
         elif path == "/api/results":
-            limit = parse_qs(urlparse(self.path).query).get("limit", ["50"])[0]
-            self._json({"results": self.daemon.results(int(limit))} if self.daemon else {"results": []})
+            limit = int(qs.get("limit", ["50"])[0])
+            self._json({"results": self.daemon.results(limit)} if self.daemon else {"results": []})
 
         elif path == "/api/log":
             status = self.daemon.status() if self.daemon else {"log": []}
@@ -264,6 +382,42 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/health":
             self._json({"status": "ok", "running": self.daemon.running if self.daemon else False})
+
+        elif path == "/api/videos":
+            limit = int(qs.get("limit", ["200"])[0])
+            if self.daemon:
+                self._json({"videos": self.daemon.list_all_videos(limit)})
+            else:
+                self._json({"videos": []})
+
+        elif path == "/api/omni":
+            video_id = qs.get("video_id", [None])[0]
+            if not video_id or not self.daemon:
+                self._json({"error": "missing video_id or no daemon"}, 400)
+                return
+            omni = self.daemon.get_video_omni(video_id)
+            if not omni:
+                self._json({"error": "video not found", "video_id": video_id}, 404)
+                return
+            # Inject _web_base_url so the viewer can resolve relative file paths
+            folder = self.daemon.find_video_folder(video_id)
+            if folder:
+                out_dir = self.daemon.config.output_dir
+                try:
+                    import pathlib
+                    rel = pathlib.Path(folder).relative_to(pathlib.Path(out_dir))
+                    omni["_web_base_url"] = f"/files/{rel.as_posix()}/"
+                except ValueError:
+                    pass
+            self._json(omni)
+
+        elif path.startswith("/files/"):
+            rel = path[7:]  # strip /files/
+            abs_path = self._resolve_static(rel)
+            if abs_path:
+                self._serve_file(abs_path)
+            else:
+                self._json({"error": "not found"}, 404)
 
         else:
             self._json({"error": "not found"}, 404)

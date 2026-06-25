@@ -274,17 +274,25 @@ window.addEventListener('DOMContentLoaded', async () => {
     loadData(__BAKED__);
     return;
   }
+  // API mode: video_id in URL query param (served by NuxTube web dashboard)
+  const params = new URLSearchParams(window.location.search);
+  const videoId = params.get('video_id');
+  if (videoId) {
+    document.getElementById('load-status').textContent = `Loading ${videoId}…`;
+    try {
+      const r = await fetch(`/api/omni?video_id=${encodeURIComponent(videoId)}`);
+      if (r.ok) { loadData(await r.json()); return; }
+    } catch(e) {}
+    document.getElementById('load-status').textContent = 'Video not found via API.';
+    return;
+  }
+  // Local mode: try ./omni.json (viewer.html is in the video folder)
   document.getElementById('load-status').textContent = 'Trying to auto-load omni.json…';
   try {
     const r = await fetch('./omni.json');
-    if (r.ok) {
-      loadData(await r.json());
-    } else {
-      document.getElementById('load-status').textContent = 'Drop an omni.json file to view, or click Browse.';
-    }
-  } catch(e) {
-    document.getElementById('load-status').textContent = 'Drop an omni.json file to view, or click Browse.';
-  }
+    if (r.ok) { loadData(await r.json()); return; }
+  } catch(e) {}
+  document.getElementById('load-status').textContent = 'Drop an omni.json file to view, or click Browse.';
 });
 
 // ─── File loading ───
@@ -331,6 +339,14 @@ function renderAll(d) {
   renderTranscript(d);
   renderKeyPoints(d);
   renderClips(d);
+}
+
+// Resolve a file path: if omni has _web_base_url, prefix it (API mode)
+function resolvePath(p) {
+  if (!p) return '';
+  if (!DATA || !DATA._web_base_url) return p;
+  if (p.startsWith('http') || p.startsWith('/')) return p;
+  return DATA._web_base_url + p;
 }
 
 // ─── Helpers ───
@@ -471,7 +487,8 @@ function renderGallery(d) {
   document.getElementById('gallery-wrap').style.display = 'block';
   document.getElementById('gallery-count').textContent = ss.length;
   document.getElementById('gallery').innerHTML = ss.map((s,i) => {
-    const p = s.screenshot||s.path||'';
+    const raw = s.screenshot||s.path||'';
+    const p = resolvePath(raw);
     const ts = s.timestamp!=null ? fmt(s.timestamp) : '';
     return `<div class="gallery-item" onclick="openLightbox('${esc(p)}')">
       <img src="${esc(p)}" alt="Screenshot ${i+1}" loading="lazy" onerror="this.closest('.gallery-item').style.display='none'">
@@ -536,7 +553,8 @@ function renderClips(d) {
   const clips = (d.clips||[]).filter(c=>c.ok!==false);
   if (!clips.length) { document.getElementById('clips-list').innerHTML='<span style="color:var(--dim)">No clips available.</span>'; return; }
   document.getElementById('clips-list').innerHTML = clips.map((c,i)=>{
-    const p = c.clip||c.path||'';
+    const raw = c.clip||c.path||'';
+    const p = resolvePath(raw);
     const ts = c.timestamp!=null?fmt(c.timestamp):`Clip ${i+1}`;
     return `<div class="clip-card">
       <div class="clip-header">

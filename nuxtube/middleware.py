@@ -262,6 +262,67 @@ class NuxTubeDaemon:
         with self._lock:
             return [self._result_to_dict(r) for r in list(self._completed)[:limit]]
 
+    def list_all_videos(self, limit: int = 200) -> List[dict]:
+        """Scan output directory for all archived videos. Returns list of metadata dicts."""
+        import json as _json
+        from pathlib import Path as _Path
+        out_dir = _Path(self.config.output_dir)
+        videos = []
+        for meta_path in sorted(out_dir.glob("*/*/metadata.json"), reverse=True):
+            try:
+                with open(meta_path, encoding="utf-8") as f:
+                    m = _json.load(f)
+                folder = str(meta_path.parent)
+                rel_folder = str(meta_path.parent.relative_to(out_dir))
+                has_omni = (meta_path.parent / "omni.json").exists()
+                has_viewer = (meta_path.parent / "viewer.html").exists()
+                videos.append({
+                    "video_id": m.get("video_id", ""),
+                    "title": m.get("title", ""),
+                    "channel": m.get("channel", ""),
+                    "category": m.get("category", ""),
+                    "duration": m.get("duration", ""),
+                    "thumbnail_url": m.get("thumbnail_url", ""),
+                    "fetched_at": m.get("fetched_at", ""),
+                    "folder": folder,
+                    "rel_folder": rel_folder,
+                    "has_omni": has_omni,
+                    "has_viewer": has_viewer,
+                    "screenshot_count": m.get("media", {}).get("screenshot_count", 0),
+                    "clip_count": m.get("media", {}).get("clip_count", 0),
+                })
+                if len(videos) >= limit:
+                    break
+            except Exception:
+                continue
+        return videos
+
+    def find_video_folder(self, video_id: str) -> Optional[str]:
+        """Find the archive folder for a video_id. Returns path or None."""
+        import json as _json
+        from pathlib import Path as _Path
+        out_dir = _Path(self.config.output_dir)
+        for meta_path in out_dir.glob("*/*/metadata.json"):
+            try:
+                with open(meta_path, encoding="utf-8") as f:
+                    m = _json.load(f)
+                if m.get("video_id") == video_id:
+                    return str(meta_path.parent)
+            except Exception:
+                continue
+        return None
+
+    def get_video_omni(self, video_id: str) -> Optional[dict]:
+        """Return OmniFile data for a video_id (generates if missing)."""
+        folder = self.find_video_folder(video_id)
+        if not folder:
+            return None
+        from .omni import build_omni, write_omni
+        omni_path = os.path.join(folder, "omni.json")
+        if not os.path.exists(omni_path):
+            write_omni(folder)
+        return build_omni(folder)
+
     def subscribe(self, callback: Callable[[str, dict], None]):
         """Subscribe to events. Callback receives (event_type, data).
 
