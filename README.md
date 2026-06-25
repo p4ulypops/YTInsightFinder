@@ -4,7 +4,7 @@
 
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9+-blue?logo=python)](https://python.org)
 [![Rich TUI](https://img.shields.io/badge/TUI-Rich-yellow)](https://github.com/Textualize/rich)
-[![v2.3](https://img.shields.io/badge/version-2.3-brightgreen)](https://github.com/p4ulypops/YTInsightFinder)
+[![v2.4](https://img.shields.io/badge/version-2.4-brightgreen)](https://github.com/p4ulypops/YTInsightFinder)
 
 ---
 
@@ -24,6 +24,7 @@ Point NuxTube at a YouTube playlist (or drop in a single URL) — it captures th
 | 📊 **Tracker** | `master_tracker.csv` | Google Sheets-ready with image formulas |
 | 🗂️ **OmniFile** | `omni.json` | Everything merged into one portable JSON |
 | 🌐 **Viewer** | `viewer.html` | Beautiful HTML viewer for the whole archive |
+| 📤 **Exports** | various | Obsidian, Markdown, CSV, Excel, Context Card, Hermes/LLM skills |
 
 ---
 
@@ -273,6 +274,7 @@ URL → transcript → metadata → player_data → download → screenshots →
 | `keypoints` | Optional | `key-points.json` + `.md` via LLM |
 | `tracker` | Optional | row in `master_tracker.csv` |
 | `omni` | Auto | `omni.json` — always runs after tracker |
+| `export` | Optional | exports to configured formats (set `pipeline.export_formats`) |
 
 ---
 
@@ -304,7 +306,15 @@ Three signals combined — not just "as you can see" phrases:
                 Score → deduplicate (10s window) → top N moments
 ```
 
-Then `segment_download: true` downloads only those segments — typically ~25x less data than the full video.
+**These same signals feed the LLM key points extraction** — chapters and top heatmap peaks are injected into the `hermes` prompt so the LLM knows which sections viewers actually rewatched, not just what words appear in the transcript.
+
+**No video needed** — `capture_mode: transcript` still gets:
+- Full transcript
+- Chapters + heatmap (fetched from YouTube's player API, no download)
+- `synthesised_moments` in the OmniFile — each heatmap peak enriched with chapter title + nearest transcript text
+- Heatmap-informed key points extracted by the LLM
+
+Then `segment_download: true` (for non-transcript modes) downloads only those segments — typically ~25x less data than the full video.
 
 ---
 
@@ -340,6 +350,58 @@ Features: live stats, worker progress, archive browser with thumbnails and filte
 | POST | `/api/skip` | Skip worker `{"worker": 0}` |
 | POST | `/api/check` | Force playlist check |
 | POST | `/api/generate-omni` | Batch generate OmniFiles (background) |
+
+---
+
+## 📤 Export Formats
+
+Every OmniFile can be exported to multiple formats — all from the same source of truth.
+
+| Format | Output file | Best for |
+|--------|------------|---------|
+| `markdown` | `note.md` | Any markdown editor, portable notes |
+| `obsidian` | `{slug}.md` | Obsidian vault — YAML frontmatter, wikilinks, Dataview tags, callouts |
+| `csv` | `key-points.csv` + `key-moments.csv` | Excel, Sheets, databases |
+| `excel` | `archive.xlsx` | Multi-sheet: Summary, Key Points, Key Moments, Chapters |
+| `context_card` | `context_card.md` | Drop into any LLM as system context — WHO / SUMMARY / INSIGHTS / MOMENTS |
+| `hermes_skill` | `{slug}-skill.md` | Load with `hermes -z @skill-name` |
+| `llm_skill` | `llm_skill.md` | Generic system prompt for Claude/GPT/Gemini/local LLMs |
+
+```bash
+# Export one folder
+python3 nuxtube.py --export ./youtube_videos/ai-agents/my-video
+python3 nuxtube.py --export ./youtube_videos/ai-agents/my-video --formats obsidian,csv,context_card
+
+# Export everything
+python3 nuxtube.py --export-all
+python3 nuxtube.py --export-all --formats obsidian,hermes_skill
+
+# From TUI: select video in completed list → Enter → e (exports all formats)
+```
+
+**Auto-export after every archive** — add to config.yaml:
+```yaml
+pipeline:
+  export_formats: [obsidian, context_card, hermes_skill]
+```
+
+### Obsidian export
+Full Obsidian-native note: YAML frontmatter with all metadata, chapter names as `[[wikilinks]]`, key points with `#tags` and `> [!info]` callout blocks, Dataview-compatible fields. Drop directly into your vault.
+
+### Context Card (the "C4")
+Compact 4-section brief designed for LLM consumption:
+1. **WHO & WHAT** — title, channel, URL, duration
+2. **SUMMARY** — 2-4 sentence overview
+3. **KEY INSIGHTS** — high/medium importance points only, with timestamps
+4. **KEY MOMENTS** — top heatmap peaks with transcript excerpts
+
+Paste this into Claude, GPT, Gemini, or any LLM as background context before asking questions about the video.
+
+### Hermes Skill
+Exports as a Hermes skill file with system context, knowledge base section, and usage examples. Load it with any Hermes-compatible call to give the model expertise about the video's content.
+
+### LLM Skill
+Generic structured system prompt — works with any AI tool. High-importance insights first, then supporting points, then most-rewatched moments with transcript snippets. Ready to copy-paste.
 
 ---
 
@@ -426,15 +488,22 @@ NeuroD-NuxTube/
 │   ├── middleware.py       # Headless daemon — workers + status API
 │   ├── dashboard.py        # Web dashboard + REST API (stdlib only)
 │   ├── tui.py              # Rich TUI — options, navigation, detail view
-│   ├── omni.py             # OmniFile generator
-│   └── viewer.py           # HTML viewer generator
+│   ├── omni.py             # OmniFile generator + synthesised_moments
+│   ├── viewer.py           # HTML viewer generator
+│   └── exporters.py        # Multi-format export engine
 └── youtube_videos/         # Archive output (gitignored)
     └── <category>/<slug>/
         ├── metadata.json
         ├── transcript.md
         ├── key-points.json + .md
-        ├── omni.json           ← auto-generated
+        ├── omni.json           ← auto-generated (includes synthesised_moments)
         ├── viewer.html         ← auto-generated or via --viewer
+        ├── note.md             ← markdown export (if configured)
+        ├── {slug}.md           ← obsidian export (if configured)
+        ├── key-points.csv      ← CSV export (if configured)
+        ├── context_card.md     ← LLM context card (if configured)
+        ├── {slug}-skill.md     ← hermes skill (if configured)
+        ├── llm_skill.md        ← generic LLM skill (if configured)
         ├── screenshots/*.jpg
         ├── clips/*.mp4
         ├── _screenshots_manifest.json
