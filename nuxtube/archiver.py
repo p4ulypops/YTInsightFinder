@@ -502,6 +502,19 @@ class ArchivePipeline:
                                 status="Done" if not result.errors else "Partial")
             result.stages_completed.append("tracker")
 
+        # --- Stage 8: OmniFile (always, non-critical) ---
+        try:
+            from .omni import write_omni
+            self._progress(on_progress, "omni", 0, 1, "Generating OmniFile...")
+            omni_path = write_omni(str(folder))
+            if omni_path:
+                result.stages_completed.append("omni")
+                metadata["files"]["omni"] = "omni.json"
+                self._log(on_log, "ok", "OmniFile written: omni.json")
+                self._progress(on_progress, "omni", 1, 1, "omni.json")
+        except Exception as _e:
+            self._log(on_log, "warn", f"OmniFile generation skipped: {_e}")
+
         # Determine final status
         if not result.errors:
             result.status = "success"
