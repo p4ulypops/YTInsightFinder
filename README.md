@@ -19,6 +19,8 @@
 - [Transcript SSL Fix](#-transcript-ssl-fix-3-tier-fallback)
 - [Channel Watching — Disclaimer](#-channel-watching--disclaimer)
 - [Middleware API](#-middleware-api)
+- [Daemon Mode](#-daemon-mode)
+- [Web Dashboard](#-web-dashboard)
 - [Bug Fixes from v1](#-bug-fixes-from-v1)
 - [Project Structure](#-project-structure)
 - [Contributing](#-contributing)
@@ -247,6 +249,8 @@ The interactive setup shows this disclaimer before allowing channel sources.
 
 NuxTube is designed to be importable as a library for automation:
 
+### Single Video Archive
+
 ```python
 from nuxtube.config import Config
 from nuxtube.archiver import ArchivePipeline
@@ -276,7 +280,159 @@ def on_progress(stage, cur, total, msg):
 result = pipeline.archive(url, on_log=on_log, on_progress=on_progress)
 ```
 
-> 🚧 **Middleware mode is designed but not yet fully built.** The core API is importable and functional. A full automation/middleware layer will be added in a future stage.
+### Daemon Middleware (watcher + workers + status API)
+
+```python
+from nuxtube.middleware import NuxTubeDaemon
+from nuxtube.config import Config
+
+# Create and start daemon
+daemon = NuxTubeDaemon(Config.load("config.yaml"))
+daemon.start()                    # Starts watcher + worker threads
+
+# Queue videos manually
+daemon.queue_url("https://youtube.com/watch?v=...")
+
+# Query full status
+status = daemon.status()
+print(status["stats"]["total_archived"])
+print(status["queue"]["count"])
+
+# Control the watcher
+daemon.pause()
+daemon.resume()
+daemon.retry_failed()
+daemon.check_now()
+daemon.skip_worker(0)
+
+# Subscribe to events
+def on_event(event_type, data):
+    if event_type == "completed":
+        print(f"Done: {data['title']}")
+    elif event_type == "failed":
+        print(f"Failed: {data['title']}")
+
+daemon.subscribe(on_event)
+
+# Graceful shutdown
+daemon.stop()
+```
+
+### Architecture
+
+```
+┌──────────────────────────────────────────────────┐
+│                  NuxTubeDaemon                    │
+│                                                   │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐       │
+│  │ Watcher  │  │ Worker 0 │  │ Worker 1 │  ...   │
+│  │ (thread) │  │ (thread) │  │ (thread) │       │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘       │
+│       │              │              │              │
+│       v              v              v              │
+│  ┌─────────────────────────────────────────┐     │
+│  │            Shared State (locked)         │     │
+│  │  queue, workers, completed, log, stats  │     │
+│  └─────────────────────────────────────────┘     │
+│       ^                                           │
+│  ┌────┴────────────────────────────────────┐     │
+│  │              API Layer                   │    │
+│  │  status(), queue_url(), pause(),         │    │
+│  │  resume(), retry(), subscribe()          │    │
+│  └──────────────────────────────────────────┘    │
+└───────────────────────────────────────────────────┘
+          ^                    ^
+          │                    │
+   ┌──────┴──────┐     ┌──────┴──────┐
+   │  TUI (Rich)  │     │  Web Dash   │
+   │  (terminal)  │     │  (HTTP API) │
+   └─────────────┘     └─────────────┘
+```
+
+---
+
+## 🖥️ Daemon Mode
+
+Run NuxTube as a headless daemon — no TUI, just background processing:
+
+```bash
+# Start daemon (headless)
+python3 nuxtube.py --daemon
+
+# Start daemon with web dashboard
+python3 nuxtube.py --daemon --web 8080
+
+# Query daemon status from another terminal
+python3 nuxtube.py --status
+
+# Or query the API directly
+curl http://localhost:8080/api/status | python3 -m json.tool
+```
+
+Daemon outputs:
+```
+  NuxTube daemon running (PID 12345)
+  Workers: 3
+  Sources: 2
+  Poll:    300s
+  Output:  ./youtube_videos
+
+  Dashboard: http://localhost:8080
+  API:       http://localhost:8080/api/status
+```
+
+---
+
+## 🌐 Web Dashboard
+
+A built-in single-page web dashboard — zero dependencies, just Python stdlib:
+
+```bash
+# Web dashboard alongside TUI
+python3 nuxtube.py --web 8080
+
+# Web dashboard with headless daemon
+python3 nuxtube.py --daemon --web 8080
+```
+
+Then open `http://localhost:8080` in any browser. Features:
+
+- 📊 Live stats (archived, failed, queued, uptime)
+- 👀 Watcher status (sources, last check, paused/active)
+- ⚙️ Worker progress bars with stage indicators
+- 📋 Queue display
+- ✅ Completed videos table
+- 📝 Color-coded live log
+- 🎛️ Control buttons (pause, resume, retry, check now, skip)
+- 📥 URL input to queue videos from the browser
+
+### REST API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/status` | Full daemon status (workers, queue, log, stats) |
+| `GET` | `/api/results` | Recent archive results |
+| `GET` | `/api/log` | Recent log lines |
+| `GET` | `/api/health` | Health check |
+| `POST` | `/api/queue` | Add video to queue `{"url": "...", "title": "..."}` |
+| `POST` | `/api/pause` | Pause watcher |
+| `POST` | `/api/resume` | Resume watcher |
+| `POST` | `/api/retry` | Retry failed videos |
+| `POST` | `/api/skip` | Skip worker `{"worker": 0}` |
+| `POST` | `/api/check` | Force playlist check now |
+
+```bash
+# Queue a video from the command line
+curl -X POST http://localhost:8080/api/queue \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://youtube.com/watch?v=..."}'
+
+# Pause the watcher
+curl -X POST http://localhost:8080/api/pause
+
+# Get status as JSON
+curl http://localhost:8080/api/status | python3 -m json.tool
+```
 
 ---
 
@@ -322,6 +478,8 @@ NeuroD-NuxTube/
 │   ├── tracker.py           # Thread-safe CSV tracker
 │   ├── archiver.py          # Pipeline orchestration + stage selection
 │   ├── watcher.py           # Playlist/channel monitoring + disclaimers
+│   ├── middleware.py        # Headless daemon core (status API, event system)
+│   ├── dashboard.py         # Web dashboard + REST API (zero-dep HTTP server)
 │   └── tui.py               # Rich multi-panel dashboard
 ├── youtube_videos/          # Output directory (gitignored)
 │   ├── _tools/              # Legacy v1 scripts (kept for reference)
