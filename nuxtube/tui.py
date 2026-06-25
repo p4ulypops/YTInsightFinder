@@ -844,23 +844,31 @@ class NuxTubeTUI:
   [cyan]↑↓[/]     Navigate completed list
   [cyan]Enter[/]  Open detail view for selected video
 
-  (in detail view)
-  [cyan]v[/]      Generate live HTML viewer
-  [cyan]b[/]      Generate baked viewer (embedded data)
-  [cyan]g[/]      Generate OmniFile (omni.json)
-  [cyan]Esc[/]    Close detail / overlay
+  [bold]OmniFile & Viewer[/]
+  [cyan]g[/]      Generate OmniFile for selected video
+  [cyan]v[/]      Generate live viewer.html for selected video
+  [cyan]G[/]      Batch-generate viewers for ALL completed videos
 
-  (in options screen)
-  [cyan]Tab[/]    Next settings tab
-  [cyan]↑↓[/]     Navigate settings
-  [cyan]Enter[/]  Edit / toggle value
-  [cyan]s[/]      Save config to disk
-  [cyan]Esc[/]    Close options
+  [bold]Detail view (Enter)[/]
+  [cyan]Tab[/]    Switch: Overview / Transcript / Key Points
+  [cyan]v[/]      Generate live viewer
+  [cyan]b[/]      Generate baked (self-contained) viewer
+  [cyan]g[/]      Generate OmniFile
+
+  [bold]Options screen (o)[/]
+  [cyan]Tab[/]    Switch tab: Pipeline / Watch / Sources / Categories
+  [cyan]↑↓[/]     Navigate items in current tab
+  [cyan]Enter[/]  Cycle / toggle / start editing a value
+  [cyan]s[/]      Save config.yaml
+  [cyan]a/d[/]    Add / Delete (Sources and Categories tabs)
+
+  [bold]Log panel (Tab to focus)[/]
+  [cyan]↑↓[/]     Scroll through log history
 
 Press [bold]?[/] to close.
 """
         return Panel(Align.center(help_text, vertical="middle"),
-                     title="[bold magenta]Help[/]", border_style="magenta")
+                     title="[bold magenta]Help — NuxTube[/]", border_style="magenta")
 
     def _render_options_overlay(self) -> Panel:
         """Render the full options/settings screen."""
