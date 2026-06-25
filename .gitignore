@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual envs
+venv/
+.venv/
+env/
+
+# Config (contains personal playlist URLs)
+config.yaml
+
+# Output (video archives — large, not for git)
+youtube_videos/*/
+youtube_videos/master_tracker.csv
+youtube_videos/_batch_summary.txt
+youtube_videos/_test_data/
+
+# Keep the tools and README
+!youtube_videos/_tools/
+!youtube_videos/README.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temp
+*.tmp
+*.bak

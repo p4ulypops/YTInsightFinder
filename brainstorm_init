@@ -1,0 +1,190 @@
+# AgenticOS — Product Requirements Document
+
+> **Owner:** 🧙Pauly🐶
+> **Status:** Design locked, pre-scaffolding
+> **Date:** 2026-06-23
+> **Version:** 0.1
+
+---
+
+## What is this?
+
+A self-hosted, modular operating system for AI agents — with a Life Planner as its first real module. It lives on Pauly's existing KVM2 VPS (always-on) with overflow to KVM4 and OpenRouter for heavier jobs.
+
+It is **not** another chatbot wrapper. It's an orchestration layer that manages agents, routes work to the right model, remembers everything, and gives Pauly a single place to plan his life and run autonomous tasks.
+
+---
+
+## Why build it?
+
+1. **Tool sprawl** — Too many disconnected AI tools, each starting from zero context every time.
+2. **No memory** — Agents don't remember who Pauly is, what he's working on, or what they did last session.
+3. **Lost outputs** — Things get built, then forgotten in random folders.
+4. **No autonomy** — Nothing runs unless Pauly is sitting in front of it.
+5. **Life admin is scattered** — Tasks, habits, calendar, and goals live in different apps that don't talk to each other.
+
+---
+
+## Core design decisions
+
+| Decision | Choice | Why |
+|----------|--------|-----|
+| **Architecture** | Orchestrator-first, planning is module #1 | Avoids rebuilding when agents outgrow a bolted-on system |
+| **Orchestrator spine** | Formalized from existing `loop-and-delegate` + `agent-resource-guard` skills | Reuses proven logic, doesn't start from scratch |
+| **Data split** | Local Postgres (KVM2) for sensitive/agent logs + Supabase for tasks/calendar/habits | Private stuff stays private, plannable stuff syncs to any device |
+| **Model routing** | Tag-based: `routine` → cheap/local/free, `legal` or `important` → Claude/Gemini | Token-conscious by default, smart when it matters |
+| **Chat/capture** | Conduit (Matrix, self-hosted on KVM2) | Private, lightweight, replaces Telegram/Slack for personal capture |
+| **Dashboard** | PWA, iPad-first | One tab, works offline, quick-add widget |
+| **Auth** | Traefik basic auth + passkey | Simple, secure enough for single-user VPS |
+| **Fun factor** | All of it — gamification, personality, voice-first, good aesthetics | Cheap local model handles banter; expensive model only for real reasoning |
+
+---
+
+## What it does (Module 1 — Life Planner)
+
+### Task management
+- Inbox for quick capture (via Matrix chat or dashboard widget)
+- Voice capture → faster-whisper transcription → auto-creates task
+- Tasks have tags, priorities, due dates
+- Kanban view on dashboard
+
+### Calendar
+- Syncs with Google Calendar (connector already exists)
+- Events and tasks visible together on the dashboard
+
+### Habits & streaks
+- Define recurring habits
+- Track streaks, earn XP
+- Visible progress on dashboard (not buried in a menu)
+
+### Gamification
+- XP system tied to task completion and habit streaks
+- Levels / milestones (keeps it motivating, not patronising)
+- Rendered on dashboard — not a separate app
+
+### Voice-first
+- Talk to it via Matrix or dashboard mic button
+- faster-whisper (already running on KVM2) handles transcription
+- Supports quick capture, task creation, and basic agent commands
+
+---
+
+## What the orchestrator does (the spine)
+
+### Agent registry
+- Each agent is a named entry with: what model it uses, what it's good at, what tools it has access to, its personality/voice profile
+- New agents plug in without rebuilding anything
+
+### Job queue
+- Tasks (from life planner or ad-hoc) get queued
+- Orchestrator assigns to the right agent based on tags and routing rules
+- Jobs can run autonomously (no human in the loop) or require approval
+
+### Model router
+- Rules engine: match task tags → model
+- Default: cheapest model that can do the job
+- Override: `legal-case`, `important`, or manual flag → Claude / Gemini
+- Tracks token usage per agent, per job
+
+### Memory
+- Agents read/write to a shared context store (local Postgres)
+- Outputs auto-saved and indexed (no more lost work)
+- Legal/sensitive data never leaves KVM2
+
+---
+
+## Infrastructure
+
+```
+┌─────────────────────────────────────────────┐
+│  KVM2 (always-on VPS)                       │
+│                                             │
+│  ┌──────────┐  ┌──────────┐  ┌───────────┐ │
+│  │ Conduit  │  │ Postgres │  │ faster-   │ │
+│  │ (Matrix) │  │ (local)  │  │ whisper   │ │
+│  └──────────┘  └──────────┘  └───────────┘ │
+│                                             │
+│  ┌──────────────────────────────┐           │
+│  │ Orchestrator                 │           │
+│  │  • agent registry            │           │
+│  │  • job queue                 │           │
+│  │  • model router              │           │
+│  │  • memory store              │           │
+│  └──────────────────────────────┘           │
+│                                             │
+│  ┌──────────────────────────────┐           │
+│  │ PWA Dashboard (Next.js)     │           │
+│  │  • life planner UI           │           │
+│  │  • agent status              │           │
+│  │  • workspace/output browser  │           │
+│  └──────────────────────────────┘           │
+│                                             │
+│  Traefik (reverse proxy + auth)             │
+└────────────────┬────────────────────────────┘
+                 │
+        overflow │ (on demand)
+                 ▼
+┌────────────────────────────┐
+│  KVM4 / OpenRouter         │
+│  Heavy agent jobs          │
+│  Expensive model calls     │
+└────────────────────────────┘
+                 │
+        sync     │
+                 ▼
+┌────────────────────────────┐
+│  Supabase (cloud)          │
+│  Tasks, calendar, habits   │
+│  Cross-device sync         │
+└────────────────────────────┘
+```
+
+---
+
+## Personality & token strategy
+
+| Layer | Model | Job | Token cost |
+|-------|-------|-----|------------|
+| Banter / UI copy / agent voice | Cheap local or free-tier | Makes it fun to use | Minimal |
+| Routine tasks (summarise, organise, draft) | OpenRouter free tier / small model | Day-to-day work | Low |
+| Important decisions, legal case, complex reasoning | Claude / Gemini | Gets it right when it matters | Higher, but rare |
+
+Personality is **not** a skin — each agent has a distinct voice defined in the registry. The cheap model generates the personality; the expensive model generates the substance. User never notices the seam.
+
+---
+
+## What success looks like
+
+- 🟢 Pauly opens one tab, sees his day: tasks, calendar, habits, streaks
+- 🟢 Voice note into Matrix → task appears on dashboard in seconds
+- 🟢 Agents run jobs overnight without Pauly being present
+- 🟢 Nothing gets lost — every output has a home, is previewable, is searchable
+- 🟢 Adding a new agent = add a config entry, not a rebuild
+- 🟢 Legal/sensitive data never leaves the VPS
+- 🟢 The whole thing runs on free/cheap models by default
+- 🟢 It's genuinely enjoyable to use — not another grey enterprise dashboard
+
+---
+
+## What's NOT in scope (yet)
+
+- ❌ Multi-user / client separation (future module)
+- ❌ Mobile native app (PWA covers this for now)
+- ❌ Obsidian integration (can be added as a memory source later)
+- ❌ SEO / content production pipelines (future module)
+- ❌ Full Trauma Inflora evidence workflow integration (future module)
+
+---
+
+## Build order
+
+1. **Orchestrator spine** — agent registry, job queue, model router, memory store
+2. **Conduit** — Matrix server for chat/capture
+3. **Life Planner module** — tasks, calendar sync, habits, streaks, XP
+4. **PWA dashboard** — single-tab UI for everything above
+5. **Voice pipeline** — faster-whisper → orchestrator → task creation
+6. **Feedback loop** — outputs auto-written back to memory, system improves over time
+
+---
+
+*This document is the source of truth for what we're building. If it's not in here, it's not in scope.*
