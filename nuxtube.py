@@ -64,6 +64,12 @@ Examples:
     parser.add_argument("--check-playlist", metavar="URL", help="List videos in a playlist")
     parser.add_argument("--check-channel", metavar="URL", help="List videos in a channel (with disclaimer)")
     parser.add_argument("--version", action="store_true", help="Show version")
+    # OmniFile + Viewer generation
+    parser.add_argument("--omni", metavar="FOLDER", help="Generate omni.json for an archive folder")
+    parser.add_argument("--omni-all", action="store_true", help="Generate omni.json for all archived videos")
+    parser.add_argument("--viewer", metavar="FOLDER", help="Generate viewer.html for an archive folder")
+    parser.add_argument("--viewer-all", action="store_true", help="Generate viewer.html for all archived videos")
+    parser.add_argument("--bake", action="store_true", help="Embed OmniFile data into viewer HTML (use with --viewer/--viewer-all)")
 
     args = parser.parse_args()
 
@@ -102,6 +108,57 @@ Examples:
         for i, (vid, title) in enumerate(videos, 1):
             print(f"  {i:3d}. {title[:60]}")
             print(f"       https://youtube.com/watch?v={vid}")
+        sys.exit(0)
+
+    # --- OmniFile generation ---
+    if args.omni:
+        from nuxtube.omni import write_omni
+        path = write_omni(args.omni)
+        if path:
+            print(f"[+] OmniFile written: {path}")
+        else:
+            print(f"[X] Failed — folder not found: {args.omni}")
+            sys.exit(1)
+        sys.exit(0)
+
+    if args.omni_all:
+        from nuxtube.omni import write_omni
+        config = load_or_setup(args.config)
+        count = 0
+        for meta_path in sorted(config.output_path.glob("*/*/metadata.json")):
+            folder = str(meta_path.parent)
+            path = write_omni(folder)
+            if path:
+                print(f"  [+] {os.path.relpath(path, config.output_dir)}")
+                count += 1
+        print(f"\nGenerated {count} OmniFile(s).")
+        sys.exit(0)
+
+    # --- Viewer generation ---
+    if args.viewer:
+        from nuxtube.viewer import generate_viewer
+        path = generate_viewer(args.viewer, bake=args.bake)
+        if path:
+            mode = "baked" if args.bake else "live"
+            print(f"[+] Viewer ({mode}) written: {path}")
+        else:
+            print(f"[X] Failed — folder not found: {args.viewer}")
+            sys.exit(1)
+        sys.exit(0)
+
+    if args.viewer_all:
+        from nuxtube.viewer import generate_viewer
+        config = load_or_setup(args.config)
+        count = 0
+        for meta_path in sorted(config.output_path.glob("*/*/metadata.json")):
+            folder = str(meta_path.parent)
+            path = generate_viewer(folder, bake=args.bake)
+            if path:
+                mode = "baked" if args.bake else "live"
+                rel = os.path.relpath(path, config.output_dir)
+                print(f"  [{mode[0].upper()}] {rel}")
+                count += 1
+        print(f"\nGenerated {count} viewer(s).")
         sys.exit(0)
 
     # --- Quick archive mode (no TUI) ---
