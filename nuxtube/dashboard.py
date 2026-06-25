@@ -203,9 +203,21 @@ function renderCompleted(items) {
   if (!items.length) { document.getElementById('completed').innerHTML = '<span class="dim">Nothing yet...</span>'; return; }
   const rows = items.map(r => {
     const badge = r.status==='success'?'ok':r.status==='partial'?'warn':'err';
-    return `<tr><td>${(r.title||'').substring(0,50)}</td><td class="dim">${r.category}</td><td>${r.screenshot_count}</td><td>${r.clip_count}</td><td><span class="badge badge-${badge}">${r.status.toUpperCase()}</span></td></tr>`;
+    const vid = r.video_id||'';
+    const viewLink = vid ? `<a href="/viewer?video_id=${encodeURIComponent(vid)}" target="_blank" style="font-size:11px;color:var(--accent);">View ↗</a>` : '';
+    return `<tr>
+      <td>${(r.title||'').substring(0,45)}</td>
+      <td class="dim">${r.category}</td>
+      <td>${r.screenshot_count}</td>
+      <td>${r.clip_count}</td>
+      <td><span class="badge badge-${badge}">${r.status.toUpperCase()}</span></td>
+      <td>${viewLink}</td>
+    </tr>`;
   }).join('');
-  document.getElementById('completed').innerHTML = `<table><tr><th>Title</th><th>Cat</th><th>SS</th><th>Clips</th><th>Status</th></tr>${rows}</table>`;
+  document.getElementById('completed').innerHTML = `<table>
+    <tr><th>Title</th><th>Cat</th><th>SS</th><th>Clips</th><th>Status</th><th>Viewer</th></tr>
+    ${rows}
+  </table>`;
 }
 
 function renderLog(lines) {
@@ -500,9 +512,13 @@ class DashboardServer:
         self._thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self._thread.start()
         url = f"http://localhost:{self.port}"
-        print(f"\n  Dashboard: {url}")
-        print(f"  API:       {url}/api/status")
-        print(f"  Health:    {url}/api/health\n")
+        print(f"\n  Dashboard:   {url}")
+        print(f"  Viewer:      {url}/viewer")
+        print(f"  Videos API:  {url}/api/videos")
+        print(f"  OmniFile:    {url}/api/omni?video_id=<id>")
+        print(f"  Static:      {url}/files/<category>/<slug>/screenshots/")
+        print(f"  Status API:  {url}/api/status")
+        print()
 
     def stop(self):
         """Stop the web server."""
