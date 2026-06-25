@@ -347,6 +347,8 @@ class NuxTubeTUI:
             self._generate_viewer_for_selected(bake=False)
         elif key == "g":
             self._generate_omni_for_selected()
+        elif key == "G":
+            self._batch_generate_viewers()
         elif key == "\t":
             self.focus_panel = (self.focus_panel + 1) % 4
         elif key == "\r" or key == "\n":
@@ -358,10 +360,15 @@ class NuxTubeTUI:
         elif key == "\x1b[A":  # Up
             if self.focus_panel == 2:
                 self.completed_cursor = max(0, self.completed_cursor - 1)
+            elif self.focus_panel == 3:
+                max_scroll = max(0, len(self.log_lines) - 15)
+                self.log_scroll = min(max_scroll, self.log_scroll + 3)
         elif key == "\x1b[B":  # Down
             if self.focus_panel == 2:
                 max_i = max(0, len(self.completed) - 1)
                 self.completed_cursor = min(max_i, self.completed_cursor + 1)
+            elif self.focus_panel == 3:
+                self.log_scroll = max(0, self.log_scroll - 3)
         return True
 
     # ─── Options screen ───────────────────────────────────────────────────
@@ -426,6 +433,8 @@ class NuxTubeTUI:
             return max(0, len(WATCH_OPTS) - 1)
         if self.opt_tab == 2:
             return max(0, len(self.config.sources) - 1)
+        if self.opt_tab == 3:
+            return max(0, len(self.config.categories) - 1)
         return 0
 
     def _handle_options_key(self, key: str) -> bool:
@@ -479,6 +488,15 @@ class NuxTubeTUI:
                 return True
             elif key == "d" and self.opt_tab == 2:
                 self._opt_delete_source()
+                return True
+            elif key == "a" and self.opt_tab == 3:
+                self._opt_add_category()
+                return True
+            elif key == "d" and self.opt_tab == 3:
+                self._opt_delete_category()
+                return True
+            elif key == "G":
+                self._batch_generate_viewers()
                 return True
         else:
             # Edit mode for int field
@@ -587,6 +605,53 @@ class NuxTubeTUI:
         self.log("info", f"Manually queued: {url}")
 
     # ─── OmniFile / Viewer generation ─────────────────────────────────────
+
+    def _opt_add_category(self):
+        self.show_options = False
+        self._start_input("New category name: ", self._do_add_category)
+
+    def _do_add_category(self, name: str):
+        name = name.strip().lower().replace(" ", "-")
+        if not name:
+            return
+        if name not in self.config.categories:
+            self.config.categories.append(name)
+            self.log("ok", f"Category added: {name}")
+        else:
+            self.log("info", f"Category already exists: {name}")
+
+    def _opt_delete_category(self):
+        cats = self.config.categories
+        if not cats:
+            return
+        idx = min(self.opt_cursor, len(cats) - 1)
+        removed = cats.pop(idx)
+        self.log("warn", f"Category removed: {removed}")
+        self.opt_cursor = max(0, self.opt_cursor - 1)
+
+    def _batch_generate_viewers(self):
+        """Generate OmniFile + viewer.html for all completed items in a background thread."""
+        import threading as _threading
+        items = list(self.completed)
+        if not items:
+            self.log("warn", "No completed items to generate viewers for")
+            return
+        self.log("info", f"Batch generating viewers for {len(items)} items...")
+        def _work():
+            from .omni import write_omni
+            from .viewer import generate_viewer
+            ok = 0
+            for r in items:
+                if not r.folder:
+                    continue
+                try:
+                    write_omni(r.folder)
+                    generate_viewer(r.folder, bake=False)
+                    ok += 1
+                except Exception as e:
+                    self.log("warn", f"Viewer gen failed for {r.video_id}: {e}")
+            self.log("ok", f"Batch complete: {ok}/{len(items)} viewers generated")
+        _threading.Thread(target=_work, daemon=True).start()
 
     def _generate_omni_for_selected(self):
         r = self._selected_completed()
@@ -711,7 +776,19 @@ class NuxTubeTUI:
                      border_style=border, height=12)
 
     def _render_log_panel(self) -> Panel:
-        shown = list(self.log_lines)[-15:]
+        all_lines = list(self.log_lines)
+        # log_scroll: 0 = live tail; positive = scrolled back
+        total = len(all_lines)
+        window = 15
+        if self.log_scroll > 0:
+            end = max(0, total - self.log_scroll)
+            start = max(0, end - window)
+            shown = all_lines[start:end]
+            scroll_hint = f" [dim](scroll ↑{self.log_scroll} lines)[/]"
+        else:
+            shown = all_lines[-window:]
+            scroll_hint = ""
+
         lines = []
         for line in shown:
             if "ERROR" in line:
@@ -722,10 +799,14 @@ class NuxTubeTUI:
                 lines.append(f"[green]{line}[/]")
             else:
                 lines.append(f"[dim]{line}[/]")
-        border = "blue" if self.focus_panel == 3 else "dim"
+
+        focused = self.focus_panel == 3
+        border = "blue" if focused else "dim"
+        nav_hint = f"{scroll_hint} [dim](↑↓ scroll)[/]" if focused else scroll_hint
         return Panel(
             "\n".join(lines) if lines else "[dim]Waiting for log output...[/]",
-            title="[bold blue]Live Log[/]", border_style=border, height=10,
+            title=f"[bold blue]Live Log[/]{nav_hint}",
+            border_style=border, height=10,
         )
 
     def _render_footer(self) -> Text:
@@ -738,7 +819,8 @@ class NuxTubeTUI:
         return Text.from_markup(
             f"  [bold cyan]p[/]ause [bold cyan]r[/]etry [bold cyan]s[/]kip "
             f"[bold cyan]n[/]ow [bold cyan]a[/]dd [bold cyan]o[/]ptions "
-            f"[bold cyan]v[/]iewer [bold cyan]g[/]=omni [bold cyan]?[/]help [bold cyan]q[/]uit  "
+            f"[bold cyan]v[/]iewer [bold cyan]g[/]=omni [bold cyan]G[/]=all "
+            f"[bold cyan]?[/]help [bold cyan]q[/]uit  "
             f"W:[bold]{active}[/]/{len(self.workers)} "
             f"Q:[bold yellow]{len(self.queue)}[/] "
             f"Done:[bold green]{self.total_archived}[/] "
@@ -918,19 +1000,21 @@ Press [bold]?[/] to close.
             f"  Output:    [dim]{out_dir}[/]",
             f"  Tracker:   [dim]{tracker_path}[/]",
             "",
-            "  [bold]Pipeline Stages Order:[/]",
+            "  [bold]Pipeline Stages Active:[/]",
         ]
         for s in self.config.pipeline.stages:
             lines.append(f"    [cyan]•[/] {s}")
         lines += [
             "",
-            "  [bold]Categories:[/]",
+            f"  [bold]Categories ({len(self.config.categories)})[/]  [dim]a=Add  d=Delete[/]",
         ]
-        for cat in self.config.categories:
-            lines.append(f"    [dim]{cat}[/]")
+        for i, cat in enumerate(self.config.categories):
+            selected = i == self.opt_cursor
+            arrow = "[bold cyan]▶[/]" if selected else " "
+            lines.append(f"  {arrow} {cat}")
         lines += [
             "",
-            "  [dim]Press [bold]s[/] in Pipeline/Watch tabs to save config.[/]",
+            "  [dim]G=Generate viewers for all completed  s=Save config[/]",
         ]
         return lines
 
