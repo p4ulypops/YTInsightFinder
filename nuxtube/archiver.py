@@ -14,6 +14,7 @@ Designed to be importable as middleware:
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
@@ -294,7 +295,6 @@ class ArchivePipeline:
                 )
                 if video_path:
                     # Extract audio with ffmpeg
-                    import subprocess
                     try:
                         subprocess.run(
                             ["ffmpeg", "-y", "-i", video_path, "-vn",
