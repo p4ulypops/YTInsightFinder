@@ -418,6 +418,16 @@ class NuxTubeTUI:
             stages = [s for s in order if s in stages or s == stage]
         self.config.pipeline.stages = stages
 
+    def _opt_nav_max(self) -> int:
+        """Max cursor index for current tab."""
+        if self.opt_tab == 0:
+            return max(0, len(self._navigable_opts()) - 1)
+        if self.opt_tab == 1:
+            return max(0, len(WATCH_OPTS) - 1)
+        if self.opt_tab == 2:
+            return max(0, len(self.config.sources) - 1)
+        return 0
+
     def _handle_options_key(self, key: str) -> bool:
         nav = self._navigable_opts()
 
@@ -433,12 +443,10 @@ class NuxTubeTUI:
                 self.opt_cursor = 0
                 return True
             elif key == "\x1b[A":  # Up
-                if nav:
-                    self.opt_cursor = max(0, self.opt_cursor - 1)
+                self.opt_cursor = max(0, self.opt_cursor - 1)
                 return True
             elif key == "\x1b[B":  # Down
-                if nav:
-                    self.opt_cursor = min(len(nav) - 1, self.opt_cursor + 1)
+                self.opt_cursor = min(self._opt_nav_max(), self.opt_cursor + 1)
                 return True
             elif key in ("\r", "\n", " "):
                 if self.opt_tab == 2:   # Sources tab — toggle enabled

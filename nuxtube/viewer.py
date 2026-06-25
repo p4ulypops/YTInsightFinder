@@ -150,6 +150,9 @@ video{width:100%;border-radius:6px;background:#000;max-height:280px;}
 ::-webkit-scrollbar-track{background:transparent;}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
 ::-webkit-scrollbar-thumb:hover{background:var(--dim);}
+/* Keyboard hint bar */
+#key-hint{position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);padding:4px 16px;font-size:11px;color:var(--dim);display:none;}
+#key-hint kbd{background:var(--surface2);border:1px solid var(--border);border-radius:3px;padding:0 4px;font-size:10px;color:var(--text);}
 </style>
 </head>
 <body>
@@ -237,7 +240,10 @@ video{width:100%;border-radius:6px;background:#000;max-height:280px;}
       <!-- Key Points -->
       <div class="tab-panel" id="tab-keypoints">
         <div id="summary-box" style="display:none;">
-          <h3>Summary</h3>
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">
+            <h3 style="margin:0;">Summary</h3>
+            <button class="btn btn-ghost" style="font-size:11px;padding:3px 10px;" onclick="copyText(document.getElementById('summary-text').textContent)">Copy</button>
+          </div>
           <div id="summary-text"></div>
         </div>
         <div id="keypoints-list"><span style="color:var(--dim)">No key points extracted.</span></div>
@@ -413,32 +419,50 @@ function renderStats(d) {
   `;
 }
 
-function renderHeatmap(d) {
-  const hm = (d.player_data&&d.player_data.heatmap)||(d.metadata&&d.metadata.player_data&&d.metadata.player_data.heatmap)||[];
-  if (!hm.length) return;
-  const wrap = document.getElementById('heatmap-wrap');
-  wrap.style.display = 'block';
-
-  const canvas = document.getElementById('heatmap-canvas');
-  const W = canvas.parentElement.clientWidth - 28 || 700;
-  canvas.width = W; canvas.height = 56;
+function _drawHeatmap(canvas, hm) {
+  const W = Math.max(canvas.parentElement.clientWidth - 28, 200);
+  canvas.width = W; canvas.height = 60;
   const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, 60);
   const vals = hm.map(p => p.heat_value != null ? p.heat_value : (p.value||0));
   const maxV = Math.max(...vals, 0.001);
   const barW = W / vals.length;
+  // Draw bars with gradient fill
   vals.forEach((v,i) => {
     const n = v / maxV;
-    const bh = Math.max(2, n * 56);
-    const hue = 200 + n*40;
-    const lns = 25 + n*30;
-    ctx.fillStyle = `hsl(${hue},70%,${lns}%)`;
-    ctx.fillRect(i*barW, 56-bh, barW+0.5, bh);
+    const bh = Math.max(2, n * 60);
+    const grad = ctx.createLinearGradient(0, 60-bh, 0, 60);
+    grad.addColorStop(0, `hsla(${200+n*60},80%,${40+n*25}%,0.9)`);
+    grad.addColorStop(1, `hsla(${200+n*60},80%,${30+n*20}%,0.6)`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(i*barW, 60-bh, barW+0.5, bh);
   });
+  // Overlay subtle grid
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+  ctx.lineWidth = 1;
+  [0.25, 0.5, 0.75].forEach(x => {
+    ctx.beginPath(); ctx.moveTo(x*W, 0); ctx.lineTo(x*W, 60); ctx.stroke();
+  });
+}
 
-  const dur = d.metadata&&d.metadata.duration;
-  if (dur) document.getElementById('hmap-end').textContent = dur;
-  const mid = hm[Math.floor(hm.length/2)];
-  if (mid&&mid.start_millis!=null) document.getElementById('hmap-mid').textContent = fmt(mid.start_millis/1000);
+function renderHeatmap(d) {
+  const hm = (d.player_data&&d.player_data.heatmap)||(d.metadata&&d.metadata.player_data&&d.metadata.player_data.heatmap)||[];
+  if (!hm.length) return;
+  document.getElementById('heatmap-wrap').style.display = 'block';
+  const canvas = document.getElementById('heatmap-canvas');
+  // Draw after layout is settled
+  requestAnimationFrame(() => {
+    _drawHeatmap(canvas, hm);
+    const dur = d.metadata&&d.metadata.duration;
+    if (dur) document.getElementById('hmap-end').textContent = dur;
+    const mid = hm[Math.floor(hm.length/2)];
+    if (mid&&mid.start_millis!=null) document.getElementById('hmap-mid').textContent = fmt(mid.start_millis/1000);
+  });
+  // Re-render on window resize
+  if (!canvas._resizeHandlerSet) {
+    canvas._resizeHandlerSet = true;
+    window.addEventListener('resize', () => { if(DATA) requestAnimationFrame(()=>_drawHeatmap(canvas, hm)); });
+  }
 }
 
 function renderGallery(d) {
@@ -529,7 +553,23 @@ function switchTab(name) {
   const names = ['overview','transcript','keypoints','clips'];
   document.querySelectorAll('.tab-btn').forEach((b,i)=>b.classList.toggle('active',names[i]===name));
   document.querySelectorAll('.tab-panel').forEach(p=>p.classList.toggle('active',p.id===`tab-${name}`));
-  if (name==='overview'&&DATA) setTimeout(()=>renderHeatmap(DATA),50);
+  if (name==='overview'&&DATA) requestAnimationFrame(()=>renderHeatmap(DATA));
+}
+
+// ─── Copy to clipboard ───
+function copyText(text) {
+  navigator.clipboard.writeText(text).then(() => {
+    // Brief visual feedback via a toast-style message
+    const el = document.createElement('div');
+    el.textContent = '✓ Copied';
+    Object.assign(el.style, {
+      position:'fixed',bottom:'20px',left:'50%',transform:'translateX(-50%)',
+      background:'var(--green)',color:'#000',padding:'6px 16px',borderRadius:'20px',
+      fontSize:'13px',fontWeight:'600',zIndex:'9999',transition:'opacity .3s'
+    });
+    document.body.appendChild(el);
+    setTimeout(()=>{ el.style.opacity='0'; setTimeout(()=>el.remove(),300); },1500);
+  }).catch(()=>{});
 }
 
 // ─── Lightbox ───
@@ -541,7 +581,13 @@ function closeLightbox() {
   document.getElementById('lightbox').classList.remove('open');
   document.getElementById('lightbox-img').src = '';
 }
-document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeLightbox(); });
+document.addEventListener('keydown', e=>{
+  if(e.key==='Escape') closeLightbox();
+  if(e.key==='1') switchTab('overview');
+  if(e.key==='2') switchTab('transcript');
+  if(e.key==='3') switchTab('keypoints');
+  if(e.key==='4') switchTab('clips');
+});
 </script>
 </body>
 </html>"""
