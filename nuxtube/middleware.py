@@ -263,12 +263,12 @@ class NuxTubeDaemon:
             return [self._result_to_dict(r) for r in list(self._completed)[:limit]]
 
     def list_all_videos(self, limit: int = 200) -> List[dict]:
-        """Scan output directory for all archived videos. Returns list of metadata dicts."""
+        """Scan output directory for all archived videos. Returns list sorted by date desc."""
         import json as _json
         from pathlib import Path as _Path
         out_dir = _Path(self.config.output_dir)
         videos = []
-        for meta_path in sorted(out_dir.glob("*/*/metadata.json"), reverse=True):
+        for meta_path in out_dir.glob("*/*/metadata.json"):
             try:
                 with open(meta_path, encoding="utf-8") as f:
                     m = _json.load(f)
@@ -291,11 +291,11 @@ class NuxTubeDaemon:
                     "screenshot_count": m.get("media", {}).get("screenshot_count", 0),
                     "clip_count": m.get("media", {}).get("clip_count", 0),
                 })
-                if len(videos) >= limit:
-                    break
             except Exception:
                 continue
-        return videos
+        # Sort newest first by fetched_at, fall back to folder path
+        videos.sort(key=lambda v: (v.get("fetched_at") or ""), reverse=True)
+        return videos[:limit]
 
     def find_video_folder(self, video_id: str) -> Optional[str]:
         """Find the archive folder for a video_id. Returns path or None."""

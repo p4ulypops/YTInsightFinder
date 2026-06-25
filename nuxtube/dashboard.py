@@ -135,8 +135,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <div class="panel" style="margin-bottom: 12px;">
   <h2 style="display:flex;justify-content:space-between;align-items:center;">
     📂 Archive Browser
-    <span style="font-size:11px;color:var(--dim);font-weight:400;">
-      <a href="/viewer" target="_blank" style="color:var(--accent);">Open standalone viewer ↗</a>
+    <span style="font-size:11px;color:var(--dim);font-weight:400;display:flex;gap:10px;align-items:center;">
+      <button onclick="api('generate-omni');this.textContent='Generating…'" style="background:var(--surface2);color:var(--accent);border:1px solid var(--accent);border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;">⚙ Generate All OmniFiles</button>
+      <a href="/viewer" target="_blank" style="color:var(--accent);">Open viewer ↗</a>
     </span>
   </h2>
   <div style="margin-bottom:8px;">
@@ -478,6 +479,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif path == "/api/check":
             self.daemon.check_now()
             self._json({"ok": True, "message": "Check triggered"})
+
+        elif path == "/api/generate-omni":
+            # Batch-generate omni.json for all archived videos in background
+            def _gen_all():
+                from .omni import write_omni
+                from pathlib import Path
+                out_dir = Path(self.daemon.config.output_dir)
+                count = 0
+                for meta_path in out_dir.glob("*/*/metadata.json"):
+                    try:
+                        write_omni(str(meta_path.parent))
+                        count += 1
+                    except Exception:
+                        pass
+                self.daemon._log_callback("ok", f"Generated {count} OmniFile(s)")
+            threading.Thread(target=_gen_all, daemon=True).start()
+            self._json({"ok": True, "message": "OmniFile generation started in background"})
 
         else:
             self._json({"error": "not found"}, 404)
