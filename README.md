@@ -476,7 +476,7 @@ NeuroD-NuxTube/
 ├── config.yaml             # Your settings (gitignored)
 ├── test_config.yaml        # Minimal config — try the TUI now
 ├── nuxtube/
-│   ├── __init__.py         # Version (2.3.0)
+│   ├── __init__.py         # Version (2.4.0)
 │   ├── config.py           # Config dataclass + setup wizard
 │   ├── transcript.py       # 3-tier transcript fetch + SSL fix
 │   ├── player_data.py      # YouTube chapters + heatmap + segment download

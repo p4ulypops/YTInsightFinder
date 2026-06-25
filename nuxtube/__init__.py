@@ -8,4 +8,4 @@ Usage:
     python3 nuxtube.py --archive URL      # Quick archive without TUI
     python3 nuxtube.py --config my.yaml   # Use custom config
 """
-__version__ = "2.3.0"
+__version__ = "2.4.0"
