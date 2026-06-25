@@ -69,35 +69,62 @@ def parse_ts(ts_str: str) -> Optional[int]:
 
 
 def fetch_via_transcript_api(video_id: str) -> Optional[dict]:
-    """Tier 1: youtube-transcript-api."""
+    """Tier 1: youtube-transcript-api.
+    
+    Handles both old API (get_transcript) and new API (fetch).
+    """
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
-        t = YouTubeTranscriptApi.get_transcript(video_id)
+        
+        # Try new API first (fetch), fall back to old (get_transcript)
+        try:
+            t = YouTubeTranscriptApi().fetch(video_id)
+        except TypeError:
+            t = YouTubeTranscriptApi.get_transcript(video_id)
+        
         if not t:
             return None
         segments = []
         full_text_parts = []
         for seg in t:
-            start = seg.get("start", 0)
-            text = seg.get("text", "").strip()
+            # Handle both object attributes and dict access
+            if hasattr(seg, 'start'):
+                start = seg.start
+                text = seg.text
+            elif isinstance(seg, dict):
+                start = seg.get("start", 0)
+                text = seg.get("text", "")
+            else:
+                continue
+            text = text.strip()
             if not text:
                 continue
             ts = format_timestamp(int(start))
             segments.append(f"{ts} {text}")
             full_text_parts.append(text)
+        
+        if not segments:
+            return None
+        
+        last_end = 0
+        if hasattr(t[-1], 'start') and hasattr(t[-1], 'duration'):
+            last_end = int(t[-1].start + t[-1].duration)
+        elif isinstance(t[-1], dict):
+            last_end = int(t[-1].get("start", 0) + t[-1].get("duration", 0))
+        
         return {
             "video_id": video_id,
             "segments": segments,
             "full_text": " ".join(full_text_parts),
             "timestamped_text": "\n".join(segments),
             "segment_count": len(segments),
-            "duration": format_timestamp(int(t[-1].get("start", 0) + t[-1].get("duration", 0))) if t else "0:00",
+            "duration": format_timestamp(last_end),
             "source": "youtube-transcript-api",
         }
     except Exception as e:
         if "No transcript" in str(e) or "Subtitles are disabled" in str(e):
             raise  # Re-raise known transcript-not-available errors
-        return None  # SSL/connection errors → try fallback
+        return None  # SSL/connection errors -> try fallback
 
 
 def fetch_via_ytdlp(video_id: str) -> Optional[dict]:
@@ -126,38 +153,46 @@ def fetch_via_ytdlp(video_id: str) -> Optional[dict]:
         seen_times = set()
 
         with open(os.path.join(tmpdir, vtt_files[0]), "r") as f:
-            for line in f:
-                line = line.strip()
-                if not line or "-->" not in line:
-                    continue
-                # Parse VTT timestamp line: 00:01:23.456 --> 00:01:26.789
-                m = re.match(
-                    r"(\d{2}):(\d{2}):(\d{2})\.(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})",
-                    line,
-                )
-                if not m:
-                    continue
-                h, mn, s = int(m.group(1)), int(m.group(2)), int(m.group(3))
-                total_sec = h * 3600 + mn * 60 + s
-                # Read the text lines that follow
-                # (will be consumed on next iteration via file read)
-                # Actually we need to read the next lines
-                # VTT format: timestamp line, then text, then blank
-                text_lines = []
-                for _ in range(2):
-                    try:
-                        nl = next(f, "").strip()
-                        if nl and "-->" not in nl and not nl.isdigit():
-                            text_lines.append(nl)
-                    except StopIteration:
-                        break
-                text = " ".join(text_lines).strip()
-                if not text or total_sec in seen_times:
-                    continue
-                seen_times.add(total_sec)
-                ts = format_timestamp(total_sec)
-                segments.append(f"{ts} {text}")
-                full_text_parts.append(text)
+            lines = f.readlines()
+
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            if not line or "-->" not in line:
+                i += 1
+                continue
+            # Parse VTT timestamp line: 00:01:23.456 --> 00:01:26.789
+            m = re.match(
+                r"(\d{2}):(\d{2}):(\d{2})\.(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})",
+                line,
+            )
+            if not m:
+                i += 1
+                continue
+            h, mn, s = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            total_sec = h * 3600 + mn * 60 + s
+
+            # Read text lines until blank or next timestamp
+            text_lines = []
+            i += 1
+            while i < len(lines):
+                nl = lines[i].strip()
+                if not nl or "-->" in nl:
+                    break
+                text_lines.append(nl)
+                i += 1
+
+            text = " ".join(text_lines)
+            # Strip VTT inline timing tags: <00:00:01.520><c> code</c>
+            text = re.sub(r"<[^>]+>", "", text)
+            text = text.strip()
+
+            if not text or total_sec in seen_times:
+                continue
+            seen_times.add(total_sec)
+            ts = format_timestamp(total_sec)
+            segments.append(f"{ts} {text}")
+            full_text_parts.append(text)
 
         if not segments:
             return None
@@ -168,7 +203,7 @@ def fetch_via_ytdlp(video_id: str) -> Optional[dict]:
             "full_text": " ".join(full_text_parts),
             "timestamped_text": "\n".join(segments),
             "segment_count": len(segments),
-            "duration": format_timestamp(segments[-1] if segments else 0),
+            "duration": format_timestamp(total_sec if segments else 0),
             "source": "yt-dlp",
         }
     except Exception:

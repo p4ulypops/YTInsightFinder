@@ -1,0 +1,15 @@
+output_dir: ./youtube_videos
+sources: []
+pipeline:
+  stages: [transcript, metadata, player_data, keypoints, tracker]
+  capture_mode: transcript
+  quality: 720p
+  key_moment_mode: smart
+  segment_download: true
+watch:
+  poll_interval: 300
+  max_workers: 2
+  auto_archive: true
+  archive_delay: 5
+  archive_timeout: 300
+categories: [ai-agents, coding, productivity, business, seo, marketing, design]
