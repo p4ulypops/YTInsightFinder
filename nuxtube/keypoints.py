@@ -38,7 +38,53 @@ Rules:
 - Tags should be lowercase, hyphenated, reusable across videos
 - Timestamps must be in chronological order
 - Do NOT hallucinate information not in the transcript
+- When chapter structure and heatmap data are provided, treat them as strong signals:
+  - Chapters = the creator's own segmentation (use chapter titles in your key point titles where relevant)
+  - Heatmap peaks = sections viewers actually replayed most (bias toward extracting key points from these timestamps)
 """
+
+
+def _build_player_context(folder_path) -> str:
+    """Build a player data context string from metadata.json for the LLM prompt."""
+    import json as _json
+    meta_path = folder_path / "metadata.json"
+    if not meta_path.exists():
+        return ""
+
+    try:
+        meta = _json.loads(meta_path.read_text(encoding="utf-8", errors="replace"))
+    except Exception:
+        return ""
+
+    pd = meta.get("player_data", {})
+    chapters = pd.get("chapters", [])
+    heatmap = pd.get("heatmap", [])
+    view_count = pd.get("view_count")
+    lines = []
+
+    if chapters:
+        lines.append("\n## Chapter Structure (creator-defined segments):")
+        for ch in chapters:
+            ts = ch.get("start_time", 0) or 0
+            m, s = int(ts) // 60, int(ts) % 60
+            lines.append(f"  {m}:{s:02d}  {ch.get('title', '')}")
+
+    if heatmap:
+        # Top 12 peaks sorted by engagement value, then re-sorted chronologically for display
+        peaks = sorted(heatmap, key=lambda x: x.get("heat_value", x.get("value", 0)), reverse=True)[:12]
+        peaks = sorted(peaks, key=lambda x: x.get("start_millis", 0))
+        lines.append("\n## Most-Replayed Moments (YouTube viewer heatmap — strongest engagement signals):")
+        lines.append("  (These are timestamps viewers rewatched the most. Strongly prefer extracting key points from these windows.)")
+        for h in peaks:
+            ts_s = (h.get("start_millis") or 0) / 1000
+            m, s = int(ts_s) // 60, int(ts_s) % 60
+            v = h.get("heat_value", h.get("value", 0))
+            lines.append(f"  {m}:{s:02d}  engagement score: {v:.3f}")
+
+    if view_count:
+        lines.append(f"\n  Total views: {view_count:,}")
+
+    return "\n".join(lines) if lines else ""
 
 
 def parse_json_response(text: str) -> Optional[dict]:
@@ -140,8 +186,12 @@ def extract_keypoints(folder: str, config=None) -> bool:
     if not transcript.strip():
         return False
 
-    prompt = f"""{SYSTEM_PROMPT}
+    # Inject player data context (chapters + heatmap peaks) when available
+    player_ctx = _build_player_context(folder)
+    player_section = f"\n## Video Intelligence (use to bias key point selection):\n{player_ctx}\n" if player_ctx else ""
 
+    prompt = f"""{SYSTEM_PROMPT}
+{player_section}
 ---
 
 Transcript:

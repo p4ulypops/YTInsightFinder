@@ -92,6 +92,10 @@ def build_omni(folder: str) -> Optional[dict]:
         else:
             omni["clips"] = []
 
+    # Synthesised moments — heatmap peaks enriched with transcript snippets
+    # Useful in transcript-only mode: gives key moment context without any video download
+    omni["synthesised_moments"] = _synthesise_moments(omni)
+
     # File index
     files = {}
     for entry in sorted(folder_path.iterdir()):
@@ -104,6 +108,91 @@ def build_omni(folder: str) -> Optional[dict]:
     omni["files"] = files
 
     return omni
+
+
+def _synthesise_moments(omni: dict) -> list:
+    """Combine heatmap peaks + chapters + transcript snippets into enriched moment objects.
+
+    No video needed — works entirely from transcript and player_data.
+    Returns a list sorted by timestamp, each entry has:
+      timestamp, chapter_title, heatmap_score, transcript_excerpt, source
+    """
+    pd = omni.get("player_data", {})
+    chapters = pd.get("chapters", [])
+    heatmap = pd.get("heatmap", [])
+    ts_text = omni.get("transcript", {}).get("timestamped_text", "")
+
+    if not heatmap and not chapters:
+        return []
+
+    # Build chapter lookup: for a given timestamp, find its chapter title
+    def find_chapter(ts_sec: float) -> str:
+        best = ""
+        for ch in chapters:
+            ch_start = ch.get("start_time", 0) or 0
+            if ch_start <= ts_sec:
+                best = ch.get("title", "")
+        return best
+
+    # Find transcript excerpt near a timestamp
+    def find_excerpt(ts_sec: float, window: int = 30) -> str:
+        if not ts_text:
+            return ""
+        import re as _re
+        # Find lines with timestamps within ±window seconds
+        lines = ts_text.split("\n")
+        excerpts = []
+        for line in lines:
+            m = _re.search(r"\[(\d+):(\d+)(?::(\d+))?\]", line)
+            if m:
+                g = m.groups()
+                if g[2] is not None:
+                    line_ts = int(g[0]) * 3600 + int(g[1]) * 60 + int(g[2])
+                else:
+                    line_ts = int(g[0]) * 60 + int(g[1])
+                if abs(line_ts - ts_sec) <= window:
+                    text = _re.sub(r"\[\d+:\d+(?::\d+)?\]\s*", "", line).strip()
+                    if text:
+                        excerpts.append(text)
+        return " ".join(excerpts[:4])[:300]
+
+    moments = []
+    seen_ts = set()
+
+    # Top heatmap peaks (top 15 by engagement)
+    top_hm = sorted(heatmap, key=lambda x: x.get("heat_value", x.get("value", 0)), reverse=True)[:15]
+    for h in top_hm:
+        ts_s = (h.get("start_millis") or 0) / 1000
+        ts_rounded = round(ts_s)
+        if ts_rounded in seen_ts:
+            continue
+        seen_ts.add(ts_rounded)
+        moments.append({
+            "timestamp": ts_s,
+            "chapter_title": find_chapter(ts_s),
+            "heatmap_score": round(h.get("heat_value", h.get("value", 0)), 4),
+            "transcript_excerpt": find_excerpt(ts_s),
+            "source": "heatmap",
+        })
+
+    # Chapter start points not already covered
+    for ch in chapters:
+        ts_s = float(ch.get("start_time", 0) or 0)
+        ts_rounded = round(ts_s)
+        if ts_rounded in seen_ts:
+            continue
+        seen_ts.add(ts_rounded)
+        moments.append({
+            "timestamp": ts_s,
+            "chapter_title": ch.get("title", ""),
+            "heatmap_score": None,
+            "transcript_excerpt": find_excerpt(ts_s),
+            "source": "chapter",
+        })
+
+    # Sort chronologically
+    moments.sort(key=lambda x: x["timestamp"])
+    return moments
 
 
 def _parse_transcript_md(raw: str) -> dict:

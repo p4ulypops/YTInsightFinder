@@ -575,7 +575,27 @@ class NuxTubeTUI:
             self._generate_viewer_for_selected(bake=False)
         elif key == "b":
             self._generate_viewer_for_selected(bake=True)
+        elif key == "e":
+            self._export_selected_all_formats()
         return True
+
+    def _export_selected_all_formats(self):
+        """Export selected completed video to all formats in background."""
+        r = self._selected_completed()
+        if not r or not r.folder:
+            self.log("warn", "No completed item selected or no folder")
+            return
+        import threading as _threading
+        self.log("info", f"Exporting all formats for: {r.title or r.video_id}")
+        def _work():
+            from .exporters import export_from_folder, FORMATS
+            results = export_from_folder(r.folder)
+            for fmt, path in results.items():
+                if str(path).startswith("ERROR"):
+                    self.log("warn", f"Export {fmt}: {path}")
+                else:
+                    self.log("ok", f"Export {fmt}: {os.path.basename(str(path))}")
+        _threading.Thread(target=_work, daemon=True).start()
 
     # ─── Input prompt ─────────────────────────────────────────────────────
 
@@ -858,6 +878,7 @@ class NuxTubeTUI:
   [cyan]v[/]      Generate live viewer
   [cyan]b[/]      Generate baked (self-contained) viewer
   [cyan]g[/]      Generate OmniFile
+  [cyan]e[/]      Export all formats (Obsidian, CSV, Context Card, Hermes...)
 
   [bold]Options screen (o)[/]
   [cyan]Tab[/]    Switch tab: Pipeline / Watch / Sources / Categories
@@ -1055,7 +1076,7 @@ Press [bold]?[/] to close.
 
         lines += [
             "",
-            "[dim]  Tab=next-tab  g=OmniFile  v=Viewer  b=Baked-viewer  Esc=close[/]",
+            "[dim]  Tab=next-tab  g=OmniFile  v=Viewer  b=Baked  e=Export-all-formats  Esc=close[/]",
         ]
         title = (r.title or r.video_id or "?")[:50]
         return Panel("\n".join(lines), title=f"[bold green]Detail: {title}[/]",

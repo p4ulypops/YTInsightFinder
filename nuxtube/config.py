@@ -43,6 +43,9 @@ class PipelineConfig:
     client_cycle: List[str] = field(default_factory=lambda: [
         "android", "ios", "tv", "web_safari", "mweb"
     ])
+    # Auto-export formats after each archive (empty = disabled)
+    # Options: markdown, obsidian, csv, excel, context_card, hermes_skill, llm_skill
+    export_formats: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -92,6 +95,7 @@ class Config:
                 "keep_video": self.pipeline.keep_video,
                 "segment_download": self.pipeline.segment_download,
                 "client_cycle": self.pipeline.client_cycle,
+                "export_formats": self.pipeline.export_formats,
             },
             "watch": {
                 "poll_interval": self.watch.poll_interval,
@@ -130,6 +134,7 @@ class Config:
             keep_video=p.get("keep_video", False),
             segment_download=p.get("segment_download", True),
             client_cycle=p.get("client_cycle", cfg.pipeline.client_cycle),
+            export_formats=p.get("export_formats", []),
         )
         w = d.get("watch", {})
         cfg.watch = WatchConfig(

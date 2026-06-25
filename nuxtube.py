@@ -70,6 +70,12 @@ Examples:
     parser.add_argument("--viewer", metavar="FOLDER", help="Generate viewer.html for an archive folder")
     parser.add_argument("--viewer-all", action="store_true", help="Generate viewer.html for all archived videos")
     parser.add_argument("--bake", action="store_true", help="Embed OmniFile data into viewer HTML (use with --viewer/--viewer-all)")
+    # Export formats
+    parser.add_argument("--export", metavar="FOLDER", help="Export archive folder to structured formats")
+    parser.add_argument("--export-all", action="store_true", help="Export all archived videos")
+    parser.add_argument("--formats", default="markdown,obsidian,csv,context_card,hermes_skill,llm_skill",
+                        help="Comma-separated export formats (default: all). "
+                             "Options: markdown, obsidian, csv, excel, context_card, hermes_skill, llm_skill")
 
     args = parser.parse_args()
 
@@ -162,6 +168,36 @@ Examples:
                 print(f"  [{mode[0].upper()}] {rel}")
                 count += 1
         print(f"\nGenerated {count} viewer(s).")
+        sys.exit(0)
+
+    # --- Export mode ---
+    if args.export:
+        from nuxtube.exporters import export_from_folder, FORMATS
+        fmt_list = [f.strip() for f in args.formats.split(",")]
+        print(f"Exporting: {args.export}")
+        print(f"Formats:   {', '.join(fmt_list)}")
+        results = export_from_folder(args.export, fmt_list)
+        for fmt, path in results.items():
+            status = "[X]" if str(path).startswith("ERROR") else "[+]"
+            print(f"  {status} {fmt:<14} {path}")
+        sys.exit(0)
+
+    if args.export_all:
+        from nuxtube.exporters import export_from_folder, FORMATS
+        config = load_or_setup(args.config)
+        fmt_list = [f.strip() for f in args.formats.split(",")]
+        print(f"Exporting all videos — formats: {', '.join(fmt_list)}")
+        count = 0
+        for meta_path in sorted(config.output_path.glob("*/*/metadata.json")):
+            folder = str(meta_path.parent)
+            rel = os.path.relpath(folder, config.output_dir)
+            print(f"\n  {rel}")
+            results = export_from_folder(folder, fmt_list)
+            for fmt, path in results.items():
+                status = "[X]" if str(path).startswith("ERROR") else "[+]"
+                print(f"    {status} {fmt:<14} {os.path.basename(str(path))}")
+            count += 1
+        print(f"\nExported {count} video(s).")
         sys.exit(0)
 
     # --- Quick archive mode (no TUI) ---

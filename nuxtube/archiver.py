@@ -503,8 +503,9 @@ class ArchivePipeline:
             result.stages_completed.append("tracker")
 
         # --- Stage 8: OmniFile (always, non-critical) ---
+        omni_data = None
         try:
-            from .omni import write_omni
+            from .omni import write_omni, build_omni
             self._progress(on_progress, "omni", 0, 1, "Generating OmniFile...")
             omni_path = write_omni(str(folder))
             if omni_path:
@@ -512,8 +513,23 @@ class ArchivePipeline:
                 metadata["files"]["omni"] = "omni.json"
                 self._log(on_log, "ok", "OmniFile written: omni.json")
                 self._progress(on_progress, "omni", 1, 1, "omni.json")
+                omni_data = build_omni(str(folder))
         except Exception as _e:
             self._log(on_log, "warn", f"OmniFile generation skipped: {_e}")
+
+        # --- Stage 9: Exports (optional, non-critical) ---
+        export_formats = getattr(self.config.pipeline, "export_formats", [])
+        if export_formats and omni_data:
+            try:
+                from .exporters import export
+                self._progress(on_progress, "export", 0, 1, f"Exporting: {','.join(export_formats)}")
+                results_exp = export(omni_data, str(folder), export_formats)
+                ok_exports = [f for f, p in results_exp.items() if not str(p).startswith("ERROR")]
+                self._log(on_log, "ok", f"Exported: {', '.join(ok_exports)}")
+                result.stages_completed.append("export")
+                self._progress(on_progress, "export", 1, 1, f"{len(ok_exports)} formats")
+            except Exception as _e:
+                self._log(on_log, "warn", f"Export stage skipped: {_e}")
 
         # Determine final status
         if not result.errors:
