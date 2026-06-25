@@ -681,6 +681,8 @@ class NuxTubeTUI:
             if path:
                 mode = "baked" if bake else "live"
                 self.log("ok", f"Viewer ({mode}): {path}")
+                if not bake:
+                    self.log("info", f"Tip: cd '{r.folder}' && python3 -m http.server 9000")
             else:
                 self.log("error", f"Viewer generation failed for {r.folder}")
         except Exception as e:

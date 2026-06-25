@@ -141,6 +141,9 @@ Examples:
         if path:
             mode = "baked" if args.bake else "live"
             print(f"[+] Viewer ({mode}) written: {path}")
+            if not args.bake:
+                print(f"    Serve: cd '{args.viewer}' && python3 -m http.server 9000")
+                print(f"    Then open: http://localhost:9000/viewer.html")
         else:
             print(f"[X] Failed — folder not found: {args.viewer}")
             sys.exit(1)
