@@ -21,6 +21,8 @@
 - [Middleware API](#-middleware-api)
 - [Daemon Mode](#-daemon-mode)
 - [Web Dashboard](#-web-dashboard)
+- [Player Data — Smart Key Moments](#-player-data--smart-key-moments)
+- [Capture Modes](#-capture-modes)
 - [Bug Fixes from v1](#-bug-fixes-from-v1)
 - [Project Structure](#-project-structure)
 - [Contributing](#-contributing)
@@ -436,6 +438,118 @@ curl http://localhost:8080/api/status | python3 -m json.tool
 
 ---
 
+## 🧠 Player Data — Smart Key Moments
+
+NuxTube extracts **YouTube player data** — the same data you see in the player UI — to intelligently identify key moments WITHOUT downloading the entire video.
+
+### What We Extract
+
+| Data | Source | What It Tells Us |
+|------|--------|------------------|
+| 📑 **Chapters** | Creator-defined segments | Structured content breakdown (e.g., "Intro", "Demo", "Q&A") |
+| 🔥 **Heatmap** | YouTube viewer engagement | Most-replayed moments — where viewers found the most value |
+| 📊 **View/Like counts** | Video metadata | Popularity / quality signal |
+| 🎵 **Audio formats** | Available streams | Audio-only download options |
+
+### Smart Key Moment Detection
+
+Instead of blindly screenshotting at every "as you can see" phrase, the **smart mode** combines three signals:
+
+```
+  📑 Chapter boundaries  +  🔥 Heatmap peaks  +  📝 Transcript visual cues
+           ↓                        ↓                      ↓
+           └────────────────────────┴──────────────────────┘
+                                    ↓
+                    Score, deduplicate, rank by heat
+                                    ↓
+                         🎯 Top N key moments
+```
+
+1. **Chapter boundaries** — Creator-curated structure (start of each section)
+2. **Heatmap peaks** — Viewer-validated interesting moments (top 15 by engagement)
+3. **Visual cues** — Transcript phrases like "as you can see" (original method)
+4. **Score & rank** — Moments that appear in multiple sources get boosted
+5. **Deduplicate** — Collapse moments within 10 seconds of each other
+6. **Top N** — Return the best moments for screenshots + clips
+
+### Segment Download (Skip the Full Video!)
+
+When `segment_download: true` (default), NuxTube downloads **only the segments around key moments** — not the entire video. This uses yt-dlp's `--download-sections` flag.
+
+```
+Full video (500MB):     ████████████████████████████████████  100%
+Segment download (20MB):  ██     ██       ██  ██     ██          ~4%
+                         ^      ^        ^   ^      ^
+                      chapter  heatmap  cue chapter heatmap
+```
+
+This means:
+- ⚡ **25x less bandwidth** on typical videos
+- 💾 **25x less disk space** for temp files
+- 🚀 **Much faster** — no need to download the whole video
+- 🎯 **Same quality** screenshots + clips from the key moments
+
+### Player Data in metadata.json
+
+```json
+{
+  "player_data": {
+    "has_chapters": true,
+    "has_heatmap": true,
+    "chapter_count": 17,
+    "heatmap_count": 100,
+    "chapters": [{"start_time": 0, "end_time": 55, "title": "The Seven Levels Explained"}, ...],
+    "heatmap": [{"start_time": 0, "end_time": 8.86, "value": 0.17}, ...],
+    "view_count": 65148,
+    "like_count": 1316
+  },
+  "capture_mode": "full",
+  "quality": "720p",
+  "key_moment_mode": "smart"
+}
+```
+
+---
+
+## 🎥 Capture Modes
+
+Choose what to download per video — from full video to transcript-only:
+
+| Mode | Downloads | Output | Bandwidth | Use Case |
+|------|-----------|--------|-----------|----------|
+| `full` | Video + audio | Screenshots + clips + transcript + keypoints | Medium (segment) / High (full) | Default — full archive |
+| `audio` | Audio only | MP3 + transcript + keypoints | Low | Podcasts, talks, music |
+| `transcript` | Nothing | Transcript + metadata + keypoints only | Minimal | Fast scanning, research |
+
+### Quality Options (for `full` mode)
+
+| Quality | Resolution | Bandwidth |
+|---------|-----------|-----------|
+| `480p` | 854×480 | ~2-5 MB/min |
+| `720p` | 1280×720 | ~5-10 MB/min |
+| `1080p` | 1920×1080 | ~10-20 MB/min |
+| `best` | Max available | Max |
+
+### Config Example
+
+```yaml
+pipeline:
+  capture_mode: full          # full | audio | transcript
+  quality: 720p               # 480p | 720p | 1080p | best
+  key_moment_mode: smart      # smart (chapters+heatmap+cues) | cues (original)
+  segment_download: true      # Download only key segments, not full video
+```
+
+### CLI Override
+
+```bash
+# Force audio-only mode for a single archive
+python3 nuxtube.py --archive URL --category coding
+# (capture_mode is read from config.yaml — edit it to change modes)
+```
+
+---
+
 ## 🐛 Bug Fixes from v1
 
 The original `archive_video.py` had several critical bugs. All fixed in v2:
@@ -473,6 +587,7 @@ NeuroD-NuxTube/
 │   ├── __init__.py
 │   ├── config.py            # Config dataclass + interactive setup wizard
 │   ├── transcript.py        # 3-tier transcript fetching (SSL fix)
+│   ├── player_data.py       # YouTube chapters + heatmap + segment download
 │   ├── media.py             # Video download, screenshots, clips
 │   ├── keypoints.py         # LLM key-point extraction
 │   ├── tracker.py           # Thread-safe CSV tracker

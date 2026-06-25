@@ -193,6 +193,27 @@ class ArchivePipeline:
 
         result.title = title
 
+        # --- Stage 2b: Player Data (chapters, heatmap) ---
+        player_data = None
+        if "player_data" in stages:
+            self._progress(on_progress, "player_data", 0, 1, "Fetching chapters + heatmap...")
+            self._log(on_log, "info", "Fetching player data (chapters, heatmap)...")
+            from .player_data import fetch_player_data
+            player_data = fetch_player_data(url)
+            if player_data:
+                self._log(on_log, "ok",
+                    f"Player data: {len(player_data.chapters)} chapters, "
+                    f"{len(player_data.heatmap)} heatmap entries, "
+                    f"{player_data.view_count} views")
+                self._progress(on_progress, "player_data", 1, 1,
+                    f"{len(player_data.chapters)} chapters, {len(player_data.heatmap)} heatmap")
+                result.stages_completed.append("player_data")
+            else:
+                self._log(on_log, "warn", "Player data fetch failed (non-critical)")
+                self._progress(on_progress, "player_data", 1, 1, "failed (non-critical)")
+        else:
+            self._log(on_log, "info", "Skipping player data stage")
+
         # Determine category
         if not category:
             category = suggest_category(title, transcript.get("full_text", ""))
@@ -232,66 +253,214 @@ class ArchivePipeline:
         video_path = None
         tmp_path = None
 
-        if "download" in stages:
-            self._progress(on_progress, "download", 0, 1, "Downloading video...")
-            self._log(on_log, "info", f"Downloading ({self.config.pipeline.max_height}p)...")
-            video_path = download_video(
-                url, self.config.pipeline.client_cycle,
-                self.config.pipeline.max_height,
-            )
-            if video_path:
-                tmp_path = video_path
-                self._log(on_log, "ok", f"Downloaded: {os.path.basename(video_path)}")
-                self._progress(on_progress, "download", 1, 1, "Downloaded")
-                result.stages_completed.append("download")
+        # Determine key moments (smart mode uses player data)
+        cue_timestamps = []
+        cues = []
+        if self.config.pipeline.key_moment_mode == "smart" and player_data:
+            # Use smart key moment detection
+            if "download" in stages:
+                cues_from_transcript = find_visual_cues(transcript["segments"])
+                cue_timestamps = [c["timestamp"] for c in cues_from_transcript]
+            key_moments = player_data.find_key_moments(cue_timestamps)
+            self._log(on_log, "info",
+                f"Smart key moments: {len(key_moments)} found "
+                f"(chapters={len(player_data.chapters)}, "
+                f"heatmap={'yes' if player_data.has_heatmap else 'no'}, "
+                f"cues={len(cue_timestamps)})")
+            # Convert to cue format for screenshots
+            cues = [{"timestamp": m.timestamp, "phrase": m.title,
+                     "context": m.chapter_title or m.title} for m in key_moments]
+        else:
+            # Original visual-cue-only mode
+            cues_from_transcript = find_visual_cues(transcript["segments"])
+            cues = cues_from_transcript
 
-                # Find visual cues
-                cues = find_visual_cues(transcript["segments"])
-                self._log(on_log, "info", f"Found {len(cues)} visual-cue moments")
-
-                # Screenshots
-                if "screenshots" in stages and cues:
-                    self._progress(on_progress, "screenshots", 0, len(cues), "Taking screenshots...")
-                    screenshots = take_screenshots(
-                        video_path, cues, str(folder / "screenshots"),
-                        self.config.pipeline.screenshot_offset,
-                    )
-                    ok_count = len([s for s in screenshots if s.get("ok")])
-                    self._log(on_log, "ok", f"Screenshots: {ok_count}/{len(screenshots)}")
-                    result.screenshot_count = ok_count
-                    result.stages_completed.append("screenshots")
-
-                    with open(folder / "_screenshots_manifest.json", "w") as f:
-                        json.dump(screenshots, f, indent=2)
-
-                # Clips
-                if "clips" in stages and cues:
-                    clips = extract_clips(
-                        video_path, cues, str(folder / "clips"),
-                        self.config.pipeline,
-                    )
-                    ok_count = len([c for c in clips if c.get("ok")])
-                    self._log(on_log, "ok", f"Clips: {ok_count}/{len(clips)}")
-                    result.clip_count = ok_count
-                    result.stages_completed.append("clips")
-
-                    if clips:
-                        with open(folder / "_clips_manifest.json", "w") as f:
-                            json.dump(clips, f, indent=2)
-
-                # Keep or delete video
-                if self.config.pipeline.keep_video:
-                    import shutil
-                    dst = folder / "source.mp4"
-                    shutil.move(video_path, str(dst))
-                    metadata["files"]["source_video"] = "source.mp4"
-                    tmp_path = None
+        # Check capture mode
+        capture_mode = self.config.pipeline.capture_mode
+        if capture_mode == "transcript":
+            # Transcript-only mode — skip all download/screenshot/clip stages
+            self._log(on_log, "info", "Transcript-only mode — skipping media download")
+        elif "download" in stages:
+            if capture_mode == "audio":
+                # Audio-only mode — download audio, no screenshots/clips
+                self._progress(on_progress, "download", 0, 1, "Downloading audio...")
+                self._log(on_log, "info", "Audio-only mode — downloading audio...")
+                from .player_data import download_segment
+                audio_path = str(folder / "audio.mp3")
+                # Download full audio
+                video_path = download_video(
+                    url, self.config.pipeline.client_cycle,
+                    max_height=480,  # smallest video that has audio
+                )
+                if video_path:
+                    # Extract audio with ffmpeg
+                    import subprocess
+                    try:
+                        subprocess.run(
+                            ["ffmpeg", "-y", "-i", video_path, "-vn",
+                             "-acodec", "libmp3lame", "-q:a", "2", audio_path],
+                            capture_output=True, timeout=120,
+                        )
+                        if os.path.exists(audio_path) and os.path.getsize(audio_path) > 100:
+                            metadata["files"]["audio"] = "audio.mp3"
+                            self._log(on_log, "ok", f"Audio extracted: {os.path.getsize(audio_path) // 1024}KB")
+                            result.stages_completed.append("download")
+                        cleanup_temp(video_path)
+                        video_path = None
+                    except Exception as e:
+                        self._log(on_log, "warn", f"Audio extraction failed: {e}")
+                        cleanup_temp(video_path)
+                        video_path = None
                 else:
-                    cleanup_temp(video_path)
-                    tmp_path = None
+                    self._log(on_log, "warn", "Audio download failed")
+
+            elif self.config.pipeline.segment_download and cues:
+                # Smart segment download — download only key segments, not whole video
+                self._log(on_log, "info",
+                    f"Segment download mode — downloading {len(cues)} segments "
+                    f"instead of full video")
+                self._progress(on_progress, "download", 0, len(cues), "Downloading segments...")
+                from .player_data import download_segment as dl_seg
+
+                segment_paths = []
+                for i, cue in enumerate(cues):
+                    seg_path = str(folder / "screenshots" / f"seg_{i:02d}_"
+                                   f"{int(cue['timestamp']//60):02d}m{int(cue['timestamp']%60):02d}s")
+                    start = max(0, cue["timestamp"] + self.config.pipeline.clip_start_offset)
+                    dur = self.config.pipeline.clip_duration + abs(self.config.pipeline.clip_start_offset) + 3
+                    ok = dl_seg(url, start, dur, seg_path,
+                               quality=self.config.pipeline.quality, audio_only=False)
+                    if ok:
+                        # Find the actual file (extension may have been added)
+                        for f in os.listdir(folder / "screenshots"):
+                            if f.startswith(f"seg_{i:02d}"):
+                                segment_paths.append((cue, os.path.join("screenshots", f)))
+                                break
+                    self._progress(on_progress, "download", i + 1, len(cues),
+                                   f"Segment {i+1}/{len(cues)}")
+
+                if segment_paths:
+                    self._log(on_log, "ok", f"Downloaded {len(segment_paths)} segments")
+                    result.stages_completed.append("download")
+
+                    # Take screenshots from segments
+                    if "screenshots" in stages:
+                        self._progress(on_progress, "screenshots", 0, len(segment_paths), "Extracting screenshots...")
+                        for i, (cue, seg_rel) in enumerate(segment_paths):
+                            seg_path = str(folder / seg_rel)
+                            ss_name = f"{int(cue['timestamp']//60):02d}m{int(cue['timestamp']%60):02d}s.jpg"
+                            ss_path = str(folder / "screenshots" / ss_name)
+                            try:
+                                subprocess.run(
+                                    ["ffmpeg", "-y", "-ss", str(self.config.pipeline.screenshot_offset),
+                                     "-i", seg_path, "-frames:v", "1", "-q:v", "2", ss_path],
+                                    capture_output=True, text=True, timeout=15,
+                                )
+                                if os.path.exists(ss_path) and os.path.getsize(ss_path) > 100:
+                                    screenshots.append({
+                                        "timestamp": cue["timestamp"],
+                                        "screenshot": f"screenshots/{ss_name}",
+                                        "ok": True,
+                                    })
+                            except Exception:
+                                pass
+                            self._progress(on_progress, "screenshots", i + 1, len(segment_paths), "")
+
+                        ok_count = len([s for s in screenshots if s.get("ok")])
+                        self._log(on_log, "ok", f"Screenshots: {ok_count}")
+                        result.screenshot_count = ok_count
+                        result.stages_completed.append("screenshots")
+
+                        if screenshots:
+                            with open(folder / "_screenshots_manifest.json", "w") as f:
+                                json.dump(screenshots, f, indent=2)
+
+                    # Segments ARE the clips
+                    if "clips" in stages:
+                        for cue, seg_rel in segment_paths:
+                            clips.append({
+                                "timestamp": cue["timestamp"],
+                                "clip": seg_rel,
+                                "ok": True,
+                                "score": 1,
+                            })
+                        ok_count = len([c for c in clips if c.get("ok")])
+                        self._log(on_log, "ok", f"Clips: {ok_count} (from segments)")
+                        result.clip_count = ok_count
+                        result.stages_completed.append("clips")
+
+                        if clips:
+                            with open(folder / "_clips_manifest.json", "w") as f:
+                                json.dump(clips, f, indent=2)
+
+                    # Clean up segments (they served their purpose)
+                    if not self.config.pipeline.keep_video:
+                        for _, seg_rel in segment_paths:
+                            try:
+                                os.unlink(str(folder / seg_rel))
+                            except Exception:
+                                pass
+
             else:
-                self._log(on_log, "warn", "Video download failed (all clients returned 403)")
-                result.errors.append("Video download failed")
+                # Full video download (original mode)
+                self._progress(on_progress, "download", 0, 1, "Downloading video...")
+                self._log(on_log, "info",
+                    f"Downloading ({self.config.pipeline.max_height}p)...")
+                video_path = download_video(
+                    url, self.config.pipeline.client_cycle,
+                    self.config.pipeline.max_height,
+                )
+                if video_path:
+                    tmp_path = video_path
+                    self._log(on_log, "ok", f"Downloaded: {os.path.basename(video_path)}")
+                    self._progress(on_progress, "download", 1, 1, "Downloaded")
+                    result.stages_completed.append("download")
+
+                    self._log(on_log, "info", f"Found {len(cues)} key moments")
+
+                    # Screenshots
+                    if "screenshots" in stages and cues:
+                        self._progress(on_progress, "screenshots", 0, len(cues), "Taking screenshots...")
+                        screenshots = take_screenshots(
+                            video_path, cues, str(folder / "screenshots"),
+                            self.config.pipeline.screenshot_offset,
+                        )
+                        ok_count = len([s for s in screenshots if s.get("ok")])
+                        self._log(on_log, "ok", f"Screenshots: {ok_count}/{len(screenshots)}")
+                        result.screenshot_count = ok_count
+                        result.stages_completed.append("screenshots")
+
+                        with open(folder / "_screenshots_manifest.json", "w") as f:
+                            json.dump(screenshots, f, indent=2)
+
+                    # Clips
+                    if "clips" in stages and cues:
+                        clips = extract_clips(
+                            video_path, cues, str(folder / "clips"),
+                            self.config.pipeline,
+                        )
+                        ok_count = len([c for c in clips if c.get("ok")])
+                        self._log(on_log, "ok", f"Clips: {ok_count}/{len(clips)}")
+                        result.clip_count = ok_count
+                        result.stages_completed.append("clips")
+
+                        if clips:
+                            with open(folder / "_clips_manifest.json", "w") as f:
+                                json.dump(clips, f, indent=2)
+
+                    # Keep or delete video
+                    if self.config.pipeline.keep_video:
+                        import shutil
+                        dst = folder / "source.mp4"
+                        shutil.move(video_path, str(dst))
+                        metadata["files"]["source_video"] = "source.mp4"
+                        tmp_path = None
+                    else:
+                        cleanup_temp(video_path)
+                        tmp_path = None
+                else:
+                    self._log(on_log, "warn", "Video download failed (all clients returned 403)")
+                    result.errors.append("Video download failed")
 
         # Always cleanup temp file if still exists
         if tmp_path:
@@ -304,6 +473,12 @@ class ArchivePipeline:
             "clips_dir": "clips/" if clips else None,
             "clip_count": len([c for c in clips if c.get("ok")]),
         }
+        # Add player data to metadata
+        if player_data:
+            metadata["player_data"] = player_data.to_dict()
+            metadata["capture_mode"] = self.config.pipeline.capture_mode
+            metadata["quality"] = self.config.pipeline.quality
+            metadata["key_moment_mode"] = self.config.pipeline.key_moment_mode
         with open(folder / "metadata.json", "w") as f:
             json.dump(metadata, f, indent=2, ensure_ascii=False)
 

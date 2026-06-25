@@ -23,15 +23,23 @@ class Source:
 class PipelineConfig:
     """Which stages to run and their parameters."""
     stages: List[str] = field(default_factory=lambda: [
-        "transcript", "metadata", "download", "screenshots",
+        "transcript", "metadata", "player_data", "download", "screenshots",
         "clips", "keypoints", "tracker"
     ])
+    # Capture mode: "full" (video+audio), "audio" (audio only), "transcript" (no download)
+    capture_mode: str = "full"
+    # Quality: "480p", "720p", "1080p", "best", "audio"
+    quality: str = "720p"
+    # Key moment detection: "smart" (chapters+heatmap+cues), "cues" (original visual-cue only)
+    key_moment_mode: str = "smart"
     screenshot_offset: int = 3       # seconds after cue
     clip_duration: int = 16          # seconds
     clip_start_offset: int = -4     # seconds before cue
     max_clips: int = 8
     max_height: int = 720
     keep_video: bool = False
+    # Segment download: download only key segments instead of whole video
+    segment_download: bool = True
     client_cycle: List[str] = field(default_factory=lambda: [
         "android", "ios", "tv", "web_safari", "mweb"
     ])
@@ -73,12 +81,16 @@ class Config:
             ],
             "pipeline": {
                 "stages": self.pipeline.stages,
+                "capture_mode": self.pipeline.capture_mode,
+                "quality": self.pipeline.quality,
+                "key_moment_mode": self.pipeline.key_moment_mode,
                 "screenshot_offset": self.pipeline.screenshot_offset,
                 "clip_duration": self.pipeline.clip_duration,
                 "clip_start_offset": self.pipeline.clip_start_offset,
                 "max_clips": self.pipeline.max_clips,
                 "max_height": self.pipeline.max_height,
                 "keep_video": self.pipeline.keep_video,
+                "segment_download": self.pipeline.segment_download,
                 "client_cycle": self.pipeline.client_cycle,
             },
             "watch": {
@@ -107,12 +119,16 @@ class Config:
         p = d.get("pipeline", {})
         cfg.pipeline = PipelineConfig(
             stages=p.get("stages", cfg.pipeline.stages),
+            capture_mode=p.get("capture_mode", "full"),
+            quality=p.get("quality", "720p"),
+            key_moment_mode=p.get("key_moment_mode", "smart"),
             screenshot_offset=p.get("screenshot_offset", 3),
             clip_duration=p.get("clip_duration", 16),
             clip_start_offset=p.get("clip_start_offset", -4),
             max_clips=p.get("max_clips", 8),
             max_height=p.get("max_height", 720),
             keep_video=p.get("keep_video", False),
+            segment_download=p.get("segment_download", True),
             client_cycle=p.get("client_cycle", cfg.pipeline.client_cycle),
         )
         w = d.get("watch", {})
@@ -218,10 +234,39 @@ def interactive_setup() -> Config:
     # 6. Keep video?
     keep = input("\U0001f3a8 Keep source MP4 after archiving? [y/N] > ").strip().lower() == "y"
 
+    # 7. Capture mode
+    print("\n\U0001f3a5 Capture mode (what to download per video):")
+    print("  full       = Video + audio (screenshots + clips + transcript)")
+    print("  audio      = Audio only (no screenshots/clips, much smaller)")
+    print("  transcript = Transcript only (no download at all, fastest)")
+    mode = input("  Mode [full/audio/transcript] (default: full) > ").strip().lower()
+    if mode not in ("full", "audio", "transcript"):
+        mode = "full"
+
+    # 8. Quality
+    quality = "720p"
+    if mode == "full":
+        print("\n\U0001f4cf Quality:")
+        print("  480p, 720p, 1080p, best")
+        quality = input("  Quality [720p] > ").strip() or "720p"
+
+    # 9. Key moment mode
+    print("\n\U0001f9e0 Key moment detection:")
+    print("  smart = Use YouTube chapters + heatmap + transcript cues (recommended)")
+    print("  cues  = Use transcript visual-cue phrases only (original method)")
+    km_mode = input("  Mode [smart/cues] (default: smart) > ").strip().lower()
+    if km_mode not in ("smart", "cues"):
+        km_mode = "smart"
+    print()
+
     cfg = Config(
         output_dir=output_dir,
         sources=sources,
-        pipeline=PipelineConfig(stages=stages, keep_video=keep),
+        pipeline=PipelineConfig(
+            stages=stages, keep_video=keep,
+            capture_mode=mode, quality=quality,
+            key_moment_mode=km_mode,
+        ),
         watch=WatchConfig(
             poll_interval=poll,
             max_workers=workers,
