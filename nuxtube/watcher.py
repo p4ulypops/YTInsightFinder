@@ -26,33 +26,44 @@ def extract_playlist_videos(playlist_url: str, timeout: int = 60) -> List[Tuple[
     """Extract video IDs and titles from a playlist.
 
     Returns list of (video_id, title) tuples.
+    Uses --print format (most reliable) with yt-dlp binary,
+    falling back to python -m yt_dlp if binary not on PATH.
     """
-    try:
-        cmd = [
-            sys.executable, "-m", "yt_dlp",
-            "--flat-playlist", "--dump-json", "--no-warnings",
-            "--extractor-args", "youtube:player_client=android",
+    # Build command — prefer binary yt-dlp, fall back to python -m yt_dlp
+    def _make_cmd(yt_bin: List[str]) -> List[str]:
+        return yt_bin + [
+            "--flat-playlist",
+            "--no-warnings",
+            "--print", "%(id)s|||%(title)s",
             playlist_url,
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        if result.returncode != 0:
-            return []
 
-        videos = []
-        for line in result.stdout.strip().split("\n"):
-            if not line:
+    for yt_bin in [["yt-dlp"], [sys.executable, "-m", "yt_dlp"]]:
+        try:
+            result = subprocess.run(
+                _make_cmd(yt_bin),
+                capture_output=True, text=True, timeout=timeout,
+            )
+            if result.returncode != 0 or not result.stdout.strip():
                 continue
-            try:
-                data = json.loads(line)
-                vid = data.get("id", "")
-                title = data.get("title", "")
-                if vid and len(vid) >= 11:
-                    videos.append((vid, title))
-            except json.JSONDecodeError:
-                continue
-        return videos
-    except Exception:
-        return []
+
+            videos = []
+            for line in result.stdout.strip().split("\n"):
+                line = line.strip()
+                if "|||" not in line:
+                    continue
+                vid, _, title = line.partition("|||")
+                vid = vid.strip()[:11]
+                title = title.strip()
+                if validate_video_id(vid):
+                    videos.append((vid, title or vid))
+
+            if videos:
+                return videos
+        except Exception:
+            continue
+
+    return []
 
 
 def extract_channel_videos(channel_url: str, timeout: int = 90) -> List[Tuple[str, str]]:
