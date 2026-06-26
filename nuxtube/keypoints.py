@@ -155,7 +155,7 @@ def call_llm(prompt: str, timeout: int = 180) -> Optional[str]:
     """Call hermes -z one-shot with the given prompt."""
     try:
         result = subprocess.run(
-            ["hermes", "-z", "--cli", "--yolo", prompt],
+            ["hermes", "--cli", "--yolo", "-z", prompt],
             capture_output=True, text=True, timeout=timeout,
         )
         if result.returncode == 0:

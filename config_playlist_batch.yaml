@@ -1,0 +1,56 @@
+output_dir: /Volumes/PSILVER-2TB/YoutubeInsights
+sources:
+  - url: https://www.youtube.com/playlist?list=PLnz01APIg0zVluzyomfB9b1tbzRzGvzJV
+    name: Pauly Playlist
+    type: playlist
+    enabled: true
+pipeline:
+  stages:
+  - transcript
+  - metadata
+  - player_data
+  - download
+  - screenshots
+  - clips
+  - keypoints
+  - tracker
+  capture_mode: full
+  quality: 720p
+  key_moment_mode: smart
+  screenshot_offset: 3
+  clip_duration: 16
+  clip_start_offset: -4
+  max_clips: 8
+  max_height: 720
+  keep_video: false
+  segment_download: true
+  client_cycle:
+  - android
+  - ios
+  - tv
+  - web_safari
+  - mweb
+  export_formats:
+  - markdown
+  - obsidian
+  - csv
+  - excel
+  - context_card
+  - hermes_skill
+  - llm_skill
+watch:
+  poll_interval: 300
+  auto_archive: true
+  max_workers: 3
+  archive_delay: 20
+  archive_timeout: 600
+categories:
+- ai-agents
+- coding
+- productivity
+- business
+- seo
+- marketing
+- design
+- uncategorized
+
